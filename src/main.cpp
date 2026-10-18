@@ -1320,9 +1320,16 @@ bool RequestedSelfTest() {
     return length>=12 && line[length-12]==L' ' &&
            core::EqualInsensitive(line+length-11,L"--self-test");
 }
+bool RequestedInitTest() {
+    const wchar_t* line=GetCommandLineW();
+    const wchar_t* suffix=L" --self-test-init";
+    if(!line) return false;
+    unsigned length=core::Length(line), suffixLength=core::Length(suffix);
+    return length>=suffixLength && core::EqualInsensitive(line+length-suffixLength,suffix);
+}
 int Run() {
     application=GetModuleHandleW(nullptr);
-    headlessSelfTest=RequestedSelfTest();
+    headlessSelfTest=RequestedSelfTest() || RequestedInitTest();
     SetProcessDpiAwarenessContext((HANDLE)(LONG_PTR)-4);
     INITCOMMONCONTROLSEX icc{sizeof(INITCOMMONCONTROLSEX),ICC_LISTVIEW_CLASSES};
     if(!InitCommonControlsEx(&icc)) return 1;
@@ -1348,6 +1355,7 @@ int Run() {
         work.left+(workW-winW)/2,work.top+(workH-winH)/2,winW,winH,
         nullptr,nullptr,application,nullptr);
     if(!window) return 3;
+    if(RequestedInitTest()) return 0;
     if(RequestedSelfTest()) return NativeGuiSelfTest();
     ShowWindow(window,SW_SHOW);UpdateWindow(window);
     MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0) {
