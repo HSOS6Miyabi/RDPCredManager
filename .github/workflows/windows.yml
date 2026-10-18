@@ -1,0 +1,72 @@
+name: Windows build, integration tests and release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows-x64:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+      - name: Build x64 Win32 application and verify PE manifest
+        shell: cmd
+        run: call build_windows.cmd
+      - name: Build native Windows tests
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\core_test.exe tests\core_test.cpp
+          cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\layout_test.exe tests\layout_test.cpp
+          cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\win_credential_test.exe tests\win_credential_test.cpp advapi32.lib
+          cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\win_gui_test.exe tests\win_gui_test.cpp advapi32.lib user32.lib
+      - name: Run logic, HiDPI layout, and Windows credential integration tests
+        shell: cmd
+        run: |
+          build\core_test.exe
+          if errorlevel 1 exit /b 1
+          build\layout_test.exe
+          if errorlevel 1 exit /b 1
+          build\win_credential_test.exe
+          if errorlevel 1 exit /b 1
+          build\manifest_verify.exe RDPCredManager.exe
+          if errorlevel 1 exit /b 1
+      - name: Windows GUI startup, save, edit and selection integration test
+        shell: cmd
+        run: build\win_gui_test.exe
+      - name: Package release files and SHA-256
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item RDPCredManager.exe dist/RDPCredManager-Win64.exe
+          git archive --format=zip --output=dist/RDPCredManager-source.zip HEAD
+          $exeHash = (Get-FileHash dist/RDPCredManager-Win64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $srcHash = (Get-FileHash dist/RDPCredManager-source.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$exeHash  RDPCredManager-Win64.exe`n$srcHash  RDPCredManager-source.zip" |
+            Set-Content -Encoding ascii dist/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RDPCredManager-Windows-x64
+          path: dist/*
+          if-no-files-found: error
+      - name: Publish validated version to GitHub Releases
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = if ($env:GITHUB_REF.StartsWith('refs/tags/')) { $env:GITHUB_REF.Substring(10) } else { 'v4.0.0' }
+          gh release view $tag --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; assets left unchanged."
+          } else {
+            gh release create $tag dist/RDPCredManager-Win64.exe dist/RDPCredManager-source.zip dist/SHA256SUMS.txt `
+              --target $env:GITHUB_SHA --title "RDP Credential Manager $tag" `
+              --notes "Windows x64 native C++ release. Includes credential conversion selection and port editor fixes. Tested with MSVC, PE manifest validation, Windows Credential Manager API integration, GUI startup smoke test, and HiDPI layout checks."
+          }

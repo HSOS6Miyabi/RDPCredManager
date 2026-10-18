@@ -1,0 +1,858 @@
+#include "win32_min.h"
+#include "core.h"
+#include "layout.h"
+
+// RDP Credential Manager — native Windows x64 GUI, no third-party runtime.
+namespace {
+constexpr unsigned MAX_ENTRIES=2048;
+constexpr int ID_TITLE=10,ID_SUBTITLE=11,ID_COUNT=12,ID_SECTION=13,ID_FORMTITLE=14;
+constexpr int ID_HOSTLABEL=15,ID_PORTLABEL=16,ID_USERLABEL=17,ID_PASSLABEL=18;
+constexpr int ID_TARGETLABEL=19,ID_PREVIEW=20,ID_HELP=21,ID_STATUS=22,ID_SEARCHLABEL=23;
+constexpr int ID_HOST=100,ID_PORT=101,ID_USER=102,ID_PASS=103,ID_MODE=104;
+constexpr int ID_SEARCH=105,ID_FILTER=106,ID_LIST=107;
+constexpr int ID_NEW=120,ID_REFRESH=121,ID_SAVE=122,ID_CONVERT=123;
+constexpr int ID_CLEANUP=124,ID_CONNECT=125,ID_DELETE=126,ID_CANCEL=127;
+constexpr DWORD UI_BG=0x00FAF7F3, UI_WHITE=0x00FFFFFF, UI_NAVY=0x003B2914;
+constexpr DWORD UI_ACCENT=0x0088730B, UI_SOFT=0x00F8F2E9,UI_BORDER=0x00E9E3DA;
+constexpr DWORD UI_MUTED=0x00877969, UI_TITLE=0x00463420,UI_RED=0x003B3BC0;
+
+struct Entry {
+    wchar_t target[520];
+    wchar_t user[520];
+    wchar_t comment[260];
+    DWORD type;
+};
+Entry items[MAX_ENTRIES]{};
+unsigned count=0,shown=0;
+unsigned visible[MAX_ENTRIES]{};
+int selected=-1;
+wchar_t currentUser[260]{};
+wchar_t pendingOld[520]{},pendingNew[520]{},pendingUser[520]{};
+bool conversionPending=false;
+HWND frame=nullptr;
+HWND title=nullptr,subtitle=nullptr,counts=nullptr,section=nullptr,formTitle=nullptr;
+HWND hostLabel=nullptr,portLabel=nullptr,userLabel=nullptr,passLabel=nullptr;
+HWND targetLabel=nullptr,preview=nullptr,help=nullptr,status=nullptr,searchLabel=nullptr;
+HWND hostBox=nullptr,portBox=nullptr,userBox=nullptr,passBox=nullptr,modeBox=nullptr;
+HWND searchBox=nullptr,filterBox=nullptr,listView=nullptr;
+HWND newBtn=nullptr,refreshBtn=nullptr,saveBtn=nullptr,convertBtn=nullptr;
+HWND cleanupBtn=nullptr,cancelBtn=nullptr,connectBtn=nullptr,deleteBtn=nullptr;
+HBRUSH whiteBrush=nullptr,navyBrush=nullptr,bgBrush=nullptr,softBrush=nullptr;
+HFONT regular=nullptr,strong=nullptr,large=nullptr,small=nullptr;
+HINSTANCE application=nullptr;
+HICON applicationIcon=nullptr,smallIcon=nullptr;
+int dpi=96,scrollY=0;
+layout::Geometry geometry{};
+bool uiUpdating=false;
+
+int S(int v) {return (v*dpi+48)/96;}
+void Wipe(wchar_t* data,unsigned size) {volatile wchar_t* p=data;while(size--) *p++=0;}
+void SetText(HWND h,const wchar_t* text) {if(h) SetWindowTextW(h,text);}
+void Notice(const wchar_t* text) {MessageBoxW(frame,text,L"RDP 凭据管理器",MB_ICONINFORMATION|MB_OK);}
+void Alert(const wchar_t* text) {MessageBoxW(frame,text,L"RDP 凭据管理器",MB_ICONWARNING|MB_OK);}
+void Status(const wchar_t* text) {SetText(status,text);}
+void Failure(const wchar_t* titleText,DWORD code) {
+    wchar_t buffer[880]={},num[20]={},details[440]={};
+    core::Copy(buffer,880,titleText);
+    core::Append(buffer,880,L"\r\n\r\nWindows 错误代码：");
+    core::FormatUnsigned(code,num,20);core::Append(buffer,880,num);
+    if(FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS,
+                      nullptr,code,0,details,440,nullptr)) {
+        core::Append(buffer,880,L"\r\n");core::Append(buffer,880,details);
+    }
+    MessageBoxW(frame,buffer,L"操作失败",MB_ICONERROR|MB_OK);
+}
+HWND Control(const wchar_t* classname,const wchar_t* label,DWORD flags,DWORD ex,int id,HFONT face) {
+    HWND h=CreateWindowExW(ex,classname,label,WS_CHILD|WS_VISIBLE|flags,
+        0,0,S(40),S(24),frame,(HMENU)(ULONG_PTR)id,application,nullptr);
+    if(h) SendMessageW(h,WM_SETFONT,(WPARAM)face,1);
+    return h;
+}
+void TextFont(HWND h,HFONT f) {if(h) SendMessageW(h,WM_SETFONT,(WPARAM)f,1);}
+void Fonts() {
+    HFONT oldRegular=regular,oldStrong=strong,oldLarge=large,oldSmall=small;
+    regular=CreateFontW(-S(15),0,0,0,FW_NORMAL,0,0,0,1,0,0,0,0,L"Segoe UI");
+    strong=CreateFontW(-S(16),0,0,0,FW_SEMIBOLD,0,0,0,1,0,0,0,0,L"Segoe UI");
+    large=CreateFontW(-S(28),0,0,0,FW_BOLD,0,0,0,1,0,0,0,0,L"Segoe UI");
+    small=CreateFontW(-S(13),0,0,0,FW_NORMAL,0,0,0,1,0,0,0,0,L"Segoe UI");
+    if(title) {
+        HWND regularItems[]={subtitle,hostLabel,portLabel,userLabel,passLabel,targetLabel,
+          searchLabel,hostBox,portBox,userBox,passBox,searchBox,modeBox,filterBox,listView,
+          refreshBtn,convertBtn,cleanupBtn,cancelBtn,deleteBtn};
+        for(HWND item:regularItems) TextFont(item,regular);
+        HWND strongItems[]={counts,section,formTitle,newBtn,saveBtn,connectBtn};
+        for(HWND item:strongItems) TextFont(item,strong);
+        HWND smallItems[]={preview,help,status};
+        for(HWND item:smallItems) TextFont(item,small);
+        TextFont(title,large);
+    }
+    if(oldRegular) DeleteObject(oldRegular);
+    if(oldStrong) DeleteObject(oldStrong);
+    if(oldLarge) DeleteObject(oldLarge);
+    if(oldSmall) DeleteObject(oldSmall);
+}
+void Pos(HWND h,layout::Rectangle r) {
+    if(h) MoveWindow(h,S(r.x),S(r.y-scrollY),S(r.w>1?r.w:1),S(r.h>1?r.h:1),1);
+}
+void Layout() {
+    if(!frame || !title) return;
+    RECT rc{};GetClientRect(frame,&rc);
+    int w=(int)(rc.right*96/dpi), h=(int)(rc.bottom*96/dpi);
+    if(w<540) w=540;
+    geometry=layout::Calculate(w,h);
+    scrollY=layout::ClampScroll(scrollY,h,geometry.canvasHeight);
+    SCROLLINFO si{sizeof(si),SIF_RANGE|SIF_PAGE|SIF_POS,0,geometry.canvasHeight-1,(UINT)h,scrollY,0};
+    SetScrollInfo(frame,SB_VERT,&si,1);
+    Pos(title,geometry.title);Pos(subtitle,geometry.subtitle);
+    Pos(newBtn,geometry.newButton);Pos(refreshBtn,geometry.refreshButton);
+    Pos(counts,{geometry.summary.x+18,geometry.summary.y+12,geometry.summary.w-36,34});
+    Pos(section,geometry.listHeading);
+    Pos(searchLabel,geometry.searchLabel);Pos(searchBox,geometry.search);
+    Pos(filterBox,geometry.filter);Pos(listView,geometry.list);
+    Pos(connectBtn,geometry.connect);Pos(deleteBtn,geometry.remove);
+    Pos(formTitle,geometry.editorHeading);
+    Pos(hostLabel,geometry.hostLabel);Pos(portLabel,geometry.portLabel);
+    Pos(hostBox,geometry.host);Pos(portBox,geometry.port);
+    Pos(userLabel,geometry.userLabel);Pos(userBox,geometry.user);
+    Pos(passLabel,geometry.passLabel);Pos(passBox,geometry.pass);
+    Pos(targetLabel,geometry.targetLabel);Pos(modeBox,geometry.mode);
+    Pos(preview,geometry.preview);Pos(help,geometry.help);
+    Pos(saveBtn,geometry.save);Pos(convertBtn,geometry.convert);
+    Pos(cleanupBtn,geometry.cleanup);Pos(cancelBtn,geometry.cancel);
+    Pos(status,geometry.status);
+    int colTotal=geometry.list.w-10;
+    SendMessageW(listView,LVM_SETCOLUMNWIDTH,0,(LPARAM)S(colTotal*42/100));
+    SendMessageW(listView,LVM_SETCOLUMNWIDTH,1,(LPARAM)S(colTotal*27/100));
+    SendMessageW(listView,LVM_SETCOLUMNWIDTH,2,(LPARAM)S(colTotal*19/100));
+    SendMessageW(listView,LVM_SETCOLUMNWIDTH,3,(LPARAM)S(colTotal*12/100));
+    InvalidateRect(frame,nullptr,0);
+}
+void ScrollTo(int wanted) {
+    if(!frame) return;
+    RECT rc{};GetClientRect(frame,&rc);
+    int h=(int)(rc.bottom*96/dpi);
+    int next=layout::ClampScroll(wanted,h,geometry.canvasHeight);
+    if(next!=scrollY) {scrollY=next;Layout();}
+}
+int GetFilter() {return (int)SendMessageW(filterBox,CB_GETCURSEL,0,0);}
+void UpdateActions() {
+    const bool domain=selected>=0 && items[selected].type==CRED_TYPE_DOMAIN_PASSWORD;
+    EnableWindow(convertBtn,domain && !conversionPending);
+    EnableWindow(saveBtn,!conversionPending);
+    EnableWindow(deleteBtn,selected>=0 && !conversionPending);
+    EnableWindow(newBtn,!conversionPending);
+    EnableWindow(listView,!conversionPending);
+    EnableWindow(searchBox,!conversionPending);
+    EnableWindow(filterBox,!conversionPending);
+    EnableWindow(hostBox,!conversionPending);
+    EnableWindow(portBox,!conversionPending);
+    EnableWindow(userBox,!conversionPending);
+    EnableWindow(passBox,!conversionPending);
+    EnableWindow(modeBox,!conversionPending);
+    EnableWindow(cleanupBtn,conversionPending);
+    EnableWindow(cancelBtn,conversionPending);
+    SetText(saveBtn,conversionPending?L"等待连接确认":(domain?L"保存为通用凭据":
+           (selected>=0?L"更新 / 复制凭据":L"保存通用凭据")));
+    SetText(formTitle,conversionPending?L"通用凭据已保存 · 等待登录确认":
+        (selected<0?L"新建通用凭据":
+         (domain?L"域密码凭据 · 转换":L"通用凭据 · 详情 / 编辑")));
+}
+void PreviewTarget() {
+    if(!hostBox || !modeBox) return;
+    wchar_t host[260]={},p[16]={},target[520]={},out[580]=L"凭据目标名：";
+    GetWindowTextW(hostBox,host,260);GetWindowTextW(portBox,p,16);
+    core::Trim(host);core::Trim(p);
+    unsigned port=0;
+    bool include=SendMessageW(modeBox,CB_GETCURSEL,0,0)==1;
+    if(core::ParsePort(p,&port) && core::BuildTargetWithPort(host,port,include,target,520)) {
+        core::Append(out,580,target);
+        if(port!=3389 && !include)
+            core::Append(out,580,L"  （目标名称不含端口，请核对 MSTSC 保存的名称）");
+    } else core::Append(out,580,L"请填写有效的主机名及端口");
+    SetText(preview,out);
+}
+void ClearEditor() {
+    uiUpdating=true;
+    selected=-1;
+    SetText(hostBox,L"");SetText(portBox,L"");SetText(userBox,currentUser);
+    SetText(passBox,L"");SendMessageW(modeBox,CB_SETCURSEL,0,0);
+    LVITEMW selection{};
+    selection.stateMask=LVIS_SELECTED|LVIS_FOCUSED;
+    selection.state=0;
+    SendMessageW(listView,LVM_SETITEMSTATE,(WPARAM)-1,(LPARAM)&selection);
+    uiUpdating=false;
+    PreviewTarget();UpdateActions();
+    Status(L"新建凭据：服务器与端口留空，用户名已填写为当前 Windows 用户。");
+    SetFocus(hostBox);
+}
+void Select(int index) {
+    if(index<0 || (unsigned)index>=count) return;
+    selected=index;
+    const Entry& e=items[index];
+    wchar_t host[300]={},port[16]={};unsigned explicitPort=0,n=3389;
+    if(!core::ParseTargetEndpoint(e.target,host,300,&explicitPort)) return;
+    if(explicitPort) n=explicitPort;
+    else core::PortFromComment(e.comment,&n);
+    core::FormatUnsigned(n,port,16);
+    uiUpdating=true;
+    SetText(hostBox,host);SetText(portBox,port);SetText(userBox,e.user);
+    SetText(passBox,L"");
+    SendMessageW(modeBox,CB_SETCURSEL,explicitPort?1:0,0);
+    uiUpdating=false;
+    PreviewTarget();UpdateActions();
+    if(e.type==CRED_TYPE_DOMAIN_PASSWORD)
+        Status(L"域密码凭据：选择“转换为通用凭据”，输入密码后可测试并清理旧记录。");
+    else Status(L"通用凭据：密码留空可保留原密码；更改目标名将复制凭据并保留原记录。");
+}
+void FillRow(int row,unsigned idx) {
+    const Entry& e=items[idx];
+    LVITEMW line{};line.mask=LVIF_TEXT|LVIF_PARAM;
+    line.iItem=row;line.pszText=(wchar_t*)e.target;line.lParam=(LPARAM)idx;
+    int inserted=(int)SendMessageW(listView,LVM_INSERTITEMW,0,(LPARAM)&line);
+    if(inserted<0) return;
+    wchar_t host[300]={},port[16]=L"3389";unsigned explicitPort=0,n=3389;
+    if(core::ParseTargetEndpoint(e.target,host,300,&explicitPort)) {
+        if(explicitPort) n=explicitPort;
+        else core::PortFromComment(e.comment,&n);
+        core::FormatUnsigned(n,port,16);
+    } else core::Copy(port,16,L"—");
+    LVITEMW cell{};cell.iItem=inserted;
+    cell.iSubItem=1;cell.pszText=(wchar_t*)e.user;
+    SendMessageW(listView,LVM_SETITEMTEXTW,(WPARAM)inserted,(LPARAM)&cell);
+    cell.iSubItem=2;cell.pszText=(wchar_t*)(e.type==CRED_TYPE_GENERIC?L"通用凭据":L"域密码");
+    SendMessageW(listView,LVM_SETITEMTEXTW,(WPARAM)inserted,(LPARAM)&cell);
+    cell.iSubItem=3;cell.pszText=port;
+    SendMessageW(listView,LVM_SETITEMTEXTW,(WPARAM)inserted,(LPARAM)&cell);
+}
+void FilterRows() {
+    if(!listView) return;
+    wchar_t term[260]={};GetWindowTextW(searchBox,term,260);core::Trim(term);
+    int filter=GetFilter();
+    uiUpdating=true;
+    SendMessageW(listView,LVM_DELETEALLITEMS,0,0);
+    shown=0;bool selectedVisible=false;
+    for(unsigned i=0;i<count;++i) {
+        if(filter==1 && items[i].type!=CRED_TYPE_GENERIC) continue;
+        if(filter==2 && items[i].type!=CRED_TYPE_DOMAIN_PASSWORD) continue;
+        if(!core::ContainsInsensitive(items[i].target,term) &&
+           !core::ContainsInsensitive(items[i].user,term)) continue;
+        visible[shown]=i;
+        FillRow((int)shown,i);
+        if((int)i==selected) {
+            selectedVisible=true;
+            LVITEMW state{};state.stateMask=LVIS_SELECTED|LVIS_FOCUSED;
+            state.state=LVIS_SELECTED|LVIS_FOCUSED;
+            SendMessageW(listView,LVM_SETITEMSTATE,(WPARAM)shown,(LPARAM)&state);
+        }
+        ++shown;
+    }
+    uiUpdating=false;
+    if(selected>=0 && !selectedVisible) {
+        selected=-1;
+        UpdateActions();
+        Status(L"筛选结果不包含之前选中的凭据，已取消该凭据的选中状态。");
+    }
+}
+void Refresh(bool preserve=true) {
+    wchar_t oldTarget[520]={};DWORD oldType=0;
+    if(preserve && selected>=0 && (unsigned)selected<count) {
+        core::Copy(oldTarget,520,items[selected].target);oldType=items[selected].type;
+    }
+    DWORD total=0;CREDENTIALW** found=nullptr;
+    BOOL enumerated=CredEnumerateW(L"TERMSRV/*",0,&total,&found);
+    if(!enumerated && GetLastError()!=ERROR_NOT_FOUND) {
+        Failure(L"读取 Windows 凭据管理器失败。",GetLastError());return;
+    }
+    count=0;selected=-1;
+    if(enumerated) {
+        for(DWORD i=0;i<total && count<MAX_ENTRIES;++i) {
+            CREDENTIALW* c=found[i];
+            if(c->Type!=CRED_TYPE_GENERIC && c->Type!=CRED_TYPE_DOMAIN_PASSWORD) continue;
+            if(!c->TargetName || !core::EqualsInsensitivePrefix(c->TargetName,L"TERMSRV/")) continue;
+            Entry& e=items[count];
+            if(!core::Copy(e.target,520,c->TargetName) ||
+               !core::Copy(e.user,520,c->UserName?c->UserName:L"") ||
+               !core::Copy(e.comment,260,c->Comment?c->Comment:L"")) continue;
+            e.type=c->Type;
+            if(oldType==e.type && core::SameTarget(oldTarget,e.target)) selected=(int)count;
+            ++count;
+        }
+        CredFree(found);
+    }
+    unsigned normal=0,legacy=0;
+    for(unsigned i=0;i<count;++i) {
+        if(items[i].type==CRED_TYPE_GENERIC) ++normal;else ++legacy;
+    }
+    wchar_t t[160]=L"凭据总数  ";wchar_t num[20];core::FormatUnsigned(count,num,20);
+    core::Append(t,160,num);core::Append(t,160,L"       通用凭据  ");
+    core::FormatUnsigned(normal,num,20);core::Append(t,160,num);
+    core::Append(t,160,L"       域密码凭据  ");
+    core::FormatUnsigned(legacy,num,20);core::Append(t,160,num);
+    if(total>MAX_ENTRIES) core::Append(t,160,L"       （仅显示前 2048 项）");
+    SetText(counts,t);FilterRows();UpdateActions();
+    if(selected>=0) Select(selected);
+    else Status(count?L"已从当前 Windows 用户的凭据管理器加载记录。":L"尚未发现 RDP 凭据。可在右侧创建。 ");
+}
+// Always display and select the newly written record, including after converting
+// a legacy record with the same target name and a different credential type.
+// Clearing filters is intentional: a hidden record must not leave the editor
+// showing fields unrelated to the current list selection.
+bool ShowCredential(const wchar_t* target,DWORD type) {
+    int index=core::FindByTargetAndType(items,count,target,type);
+    if(index<0) return false;
+    uiUpdating=true;
+    SetText(searchBox,L"");
+    SendMessageW(filterBox,CB_SETCURSEL,0,0);
+    uiUpdating=false;
+    selected=index;
+    FilterRows();
+    Select(index);
+    for(unsigned row=0;row<shown;++row) {
+        if(visible[row]!=(unsigned)index) continue;
+        LVITEMW state{};
+        state.stateMask=LVIS_SELECTED|LVIS_FOCUSED;
+        state.state=LVIS_SELECTED|LVIS_FOCUSED;
+        uiUpdating=true;
+        SendMessageW(listView,LVM_SETITEMSTATE,(WPARAM)row,(LPARAM)&state);
+        SendMessageW(listView,LVM_ENSUREVISIBLE,(WPARAM)row,0);
+        uiUpdating=false;
+        return true;
+    }
+    return false;
+}
+int SelectedFromList() {
+    LONG_PTR line=SendMessageW(listView,LVM_GETNEXTITEM,(WPARAM)-1,LVNI_SELECTED);
+    if(line<0 || (unsigned)line>=shown) return -1;
+    return (int)visible[line];
+}
+bool Fields(wchar_t* host,wchar_t* portStr,wchar_t* username,unsigned* port,bool usernameRequired) {
+    GetWindowTextW(hostBox,host,260);GetWindowTextW(portBox,portStr,16);
+    GetWindowTextW(userBox,username,520);
+    core::Trim(host);core::Trim(portStr);core::Trim(username);
+    if(!core::ValidateHost(host)) {
+        Alert(L"服务器地址无效。请填写主机名、IPv4 地址或带方括号的 IPv6 地址。\r\n请在独立的端口字段填写端口号。");
+        SetFocus(hostBox);return false;
+    }
+    if(!core::ParsePort(portStr,port)) {
+        Alert(L"端口必须介于 1 至 65535 之间，留空表示默认端口 3389。");
+        SetFocus(portBox);return false;
+    }
+    if(usernameRequired && !username[0]) {
+        Alert(L"请输入远程桌面登录用户名。 ");SetFocus(userBox);return false;
+    }
+    return true;
+}
+
+int CredentialPresence(const wchar_t* target,DWORD type) {
+    CREDENTIALW* c=nullptr;
+    if(CredReadW(target,type,0,&c)) {CredFree(c);return 1;}
+    DWORD error=GetLastError();
+    if(error==ERROR_NOT_FOUND) return 0;
+    Failure(L"无法检查 Windows 凭据。",error);
+    return -1;
+}
+bool SameBytes(const BYTE* a,const BYTE* b,DWORD size) {
+    unsigned different=0;
+    for(DWORD i=0;i<size;++i) different |= unsigned(a[i]^b[i]);
+    return different==0;
+}
+bool WriteAndVerify(const wchar_t* target,const wchar_t* user,unsigned port,
+                    const BYTE* blob,DWORD blobSize,bool preserve) {
+    wchar_t comment[80]=L"RDPCredManager.Port=";
+    wchar_t p[16];core::FormatUnsigned(port,p,16);core::Append(comment,80,p);
+    CREDENTIALW c{};
+    c.Type=CRED_TYPE_GENERIC;c.TargetName=(LPWSTR)target;
+    c.UserName=(LPWSTR)user;c.Comment=comment;c.Persist=CRED_PERSIST_LOCAL_MACHINE;
+    c.CredentialBlob=(LPBYTE)blob;c.CredentialBlobSize=blobSize;
+    if(!CredWriteW(&c,preserve?CRED_PRESERVE_CREDENTIAL_BLOB:0)) {
+        Failure(L"写入通用凭据失败。",GetLastError());return false;
+    }
+    CREDENTIALW* check=nullptr;
+    if(!CredReadW(target,CRED_TYPE_GENERIC,0,&check)) {
+        Failure(L"凭据已写入，但重新读取验证失败。",GetLastError());return false;
+    }
+    bool ok=check->UserName && core::EqualInsensitive(check->UserName,user) &&
+            (preserve || (check->CredentialBlobSize==blobSize &&
+                          (blobSize==0 || (check->CredentialBlob && SameBytes(blob,check->CredentialBlob,blobSize)))));
+    CredFree(check);
+    if(!ok) Alert(L"Windows 已写入凭据，但读取验证结果不一致。请重新检查该记录。 ");
+    return ok;
+}
+void Save(bool converting) {
+    // The Save action handles the selected legacy credential as a conversion.
+    if(!converting && selected>=0 && items[selected].type==CRED_TYPE_DOMAIN_PASSWORD)
+        converting=true;
+    if(conversionPending) {
+        Alert(L"请先完成当前凭据转换，或取消转换并保留两条凭据。");return;
+    }
+    if(converting && (selected<0 || items[selected].type!=CRED_TYPE_DOMAIN_PASSWORD)) {
+        Alert(L"请在列表中选择一条域密码凭据，再开始转换。 ");return;
+    }
+    wchar_t host[260]={},portText[16]={},user[520]={},target[520]={};unsigned port=3389;
+    if(!Fields(host,portText,user,&port,true)) return;
+    bool withPort=SendMessageW(modeBox,CB_GETCURSEL,0,0)==1;
+    if(!core::BuildTargetWithPort(host,port,withPort,target,520)) {
+        Alert(L"凭据目标名称过长或地址无效。 ");return;
+    }
+    wchar_t password[1025]={};
+    int length=GetWindowTextW(passBox,password,1025);
+    if(length<0 || length>512) {
+        Wipe(password,1025);Alert(L"密码长度不得超过 512 个 UTF-16 字符。");return;
+    }
+    const bool same=selected>=0 && items[selected].type==CRED_TYPE_GENERIC &&
+                    core::SameTarget(items[selected].target,target);
+    if(converting && !length) {
+        Wipe(password,1025);
+        Alert(L"旧式域密码凭据的密码不可由本程序读取。转换时请重新输入登录密码。");return;
+    }
+    CREDENTIALW* source=nullptr;
+    bool preserve=false;
+    const BYTE* blob=(const BYTE*)password;
+    DWORD blobSize=(DWORD)length*sizeof(wchar_t);
+    if(!length && !converting && same) {
+        if(CredentialPresence(target,CRED_TYPE_GENERIC)!=1) {
+            Wipe(password,1025);Alert(L"原通用凭据不存在，请输入密码后重新保存。 ");return;
+        }
+        blob=nullptr;blobSize=0;preserve=true;
+    } else if(!length && !converting && selected>=0 && items[selected].type==CRED_TYPE_GENERIC) {
+        if(!CredReadW(items[selected].target,CRED_TYPE_GENERIC,0,&source)) {
+            DWORD err=GetLastError();Wipe(password,1025);
+            Failure(L"无法读取原通用凭据。请重新输入密码后重试。",err);return;
+        }
+        blob=source->CredentialBlob;blobSize=source->CredentialBlobSize;
+        if(!blob || !blobSize) {
+            CredFree(source);Wipe(password,1025);
+            Alert(L"原通用凭据中没有可复制的密码。请重新输入密码。 ");return;
+        }
+    } else if(!length) {
+        Wipe(password,1025);Alert(L"请输入密码，才能创建新凭据。 ");return;
+    }
+    if(converting) {
+        if(MessageBoxW(frame,
+            L"将使用重新输入的密码创建通用凭据。\r\n\r\n通用凭据可由同一 Windows 用户身份下的应用读取，安全保护级别与域密码凭据不同。\r\n\r\n原域密码凭据会暂时保留，待您确认连接成功后再删除。\r\n\r\n是否继续？",
+            L"确认转换凭据",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) {
+            if(source) CredFree(source);Wipe(password,1025);return;
+        }
+    }
+    int targetPresence=CredentialPresence(target,CRED_TYPE_GENERIC);
+    if(targetPresence<0) {if(source) CredFree(source);Wipe(password,1025);return;}
+    if(converting && targetPresence==1) {
+        if(source) CredFree(source);
+        Wipe(password,1025);
+        Alert(L"目标名称下已存在通用凭据。为避免覆盖已经保存的密码，转换操作已取消。\r\n\r\n请检查已有的通用凭据，或选择其他正确的凭据目标名称。");
+        return;
+    }
+    if(targetPresence==1 && !same) {
+        if(MessageBoxW(frame,
+            L"目标名称下已有通用凭据。继续将覆盖其用户名与密码。\r\n\r\n是否覆盖此凭据？",
+            L"确认覆盖现有通用凭据",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) {
+            if(source) CredFree(source);Wipe(password,1025);return;
+        }
+    }
+    bool saved=WriteAndVerify(target,user,port,blob,blobSize,preserve);
+    if(source) CredFree(source);
+    Wipe(password,1025);SetText(passBox,L"");
+    if(!saved) return;
+    if(converting) {
+        conversionPending=true;
+        core::Copy(pendingOld,520,items[selected].target);
+        core::Copy(pendingNew,520,target);
+        core::Copy(pendingUser,520,user);
+    }
+    // Select the *new* generic record. The legacy record intentionally remains
+    // visible until the user confirms that an actual RDP login succeeded.
+    Refresh(false);
+    if(!ShowCredential(target,CRED_TYPE_GENERIC))
+        Alert(L"保存后没有在凭据列表中找到通用凭据。请刷新列表，检查新凭据是否存在。");
+    UpdateActions();
+    if(converting) {
+        UpdateActions();
+        Status(L"通用凭据已写入并验证。请连接测试，确认成功后点击右侧“确认连接成功并清理旧记录”。");
+        Notice(L"新通用凭据已保存并通过 Windows 凭据管理器的读取验证。\r\n\r\n请点击“连接远程桌面”进行实际登录测试。\r\n成功登录后，再点击“确认连接成功并清理旧记录”。\r\n\r\n程序不会自动判断 RDP 登录是否成功，也不会提前删除旧记录。");
+    } else Status(same?L"已更新通用凭据，并验证保存结果。":L"已保存通用凭据。若复制到新目标名，旧记录仍保留，可自行删除。");
+}
+void CancelConversion() {
+    if(!conversionPending) return;
+    if(MessageBoxW(frame,
+        L"取消转换确认流程？\r\n\r\n新创建的通用凭据和原域密码凭据都会保留在 Windows 凭据管理器中，稍后可以分别管理。",
+        L"保留当前凭据",MB_YESNO|MB_ICONINFORMATION|MB_DEFBUTTON2)!=IDYES) return;
+    wchar_t newTarget[520]={};core::Copy(newTarget,520,pendingNew);
+    conversionPending=false;pendingOld[0]=0;pendingNew[0]=0;pendingUser[0]=0;
+    Refresh(false);
+    ShowCredential(newTarget,CRED_TYPE_GENERIC);
+    UpdateActions();
+    Status(L"已结束转换确认流程，新通用凭据与旧域密码凭据均已保留。");
+}
+void Cleanup() {
+    if(!conversionPending) return;
+    int newPresent=CredentialPresence(pendingNew,CRED_TYPE_GENERIC);
+    if(newPresent<0) return;
+    if(newPresent==0) {
+        Alert(L"未找到刚才创建的通用凭据。旧凭据将保留。");return;
+    }
+    CREDENTIALW* pendingCheck=nullptr;
+    if(!CredReadW(pendingNew,CRED_TYPE_GENERIC,0,&pendingCheck)) {
+        Failure(L"无法复核新通用凭据，旧凭据仍然保留。",GetLastError());return;
+    }
+    bool userMatches=pendingCheck->UserName && core::EqualInsensitive(pendingCheck->UserName,pendingUser);
+    CredFree(pendingCheck);
+    if(!userMatches) {
+        Alert(L"新凭据的用户名已发生变化，停止清理旧凭据。请重新检查连接信息。");return;
+    }
+    int oldPresent=CredentialPresence(pendingOld,CRED_TYPE_DOMAIN_PASSWORD);
+    if(oldPresent<0) return;
+    if(oldPresent==0) {
+        Alert(L"原域密码凭据已不存在，清理流程将结束。");
+        conversionPending=false;pendingOld[0]=0;pendingNew[0]=0;pendingUser[0]=0;
+        UpdateActions();return;
+    }
+    wchar_t msg[1250]=L"请确认：您已经使用新保存的通用凭据成功登录远程桌面。\r\n\r\n旧凭据：";
+    core::Append(msg,1250,pendingOld);
+    core::Append(msg,1250,L"\r\n新凭据：");core::Append(msg,1250,pendingNew);
+    core::Append(msg,1250,L"\r\n\r\n选择“是”将永久删除旧域密码凭据。是否已成功登录并确认删除？");
+    if(MessageBoxW(frame,msg,L"确认登录成功并删除旧凭据",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) return;
+    if(!CredDeleteW(pendingOld,CRED_TYPE_DOMAIN_PASSWORD,0)) {
+        Failure(L"删除原域密码凭据失败，新通用凭据已保留。",GetLastError());return;
+    }
+    wchar_t newTarget[520]={};core::Copy(newTarget,520,pendingNew);
+    conversionPending=false;pendingOld[0]=0;pendingNew[0]=0;pendingUser[0]=0;
+    Refresh(false);
+    ShowCredential(newTarget,CRED_TYPE_GENERIC);
+    UpdateActions();
+    Status(L"已删除原域密码凭据，当前选中的是新通用凭据。 ");
+}
+void DeleteSelected() {
+    if(selected<0 || (unsigned)selected>=count) {Alert(L"请先选择要删除的凭据。 ");return;}
+    const Entry& e=items[selected];
+    wchar_t msg[760]=L"将从当前 Windows 用户的凭据管理器删除以下记录：\r\n\r\n";
+    core::Append(msg,760,e.target);
+    core::Append(msg,760,e.type==CRED_TYPE_GENERIC?L"\r\n类型：通用凭据":L"\r\n类型：域密码凭据");
+    core::Append(msg,760,L"\r\n\r\n此操作无法撤销。确定删除吗？");
+    if(MessageBoxW(frame,msg,L"删除凭据",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) return;
+    if(!CredDeleteW(e.target,e.type,0)) {Failure(L"删除凭据失败。",GetLastError());return;}
+    if(conversionPending && ((e.type==CRED_TYPE_DOMAIN_PASSWORD &&
+        core::SameTarget(pendingOld,e.target)) || (e.type==CRED_TYPE_GENERIC &&
+        core::SameTarget(pendingNew,e.target)))) {
+        conversionPending=false;pendingOld[0]=0;pendingNew[0]=0;pendingUser[0]=0;
+    }
+    Refresh(false);ClearEditor();Status(L"已删除选定的 Windows 凭据。 ");
+}
+void Connect() {
+    wchar_t host[260]={},portText[16]={},user[520]={};unsigned port=3389;
+    if(conversionPending) {
+        unsigned explicitPort=0;
+        if(!core::ParseTargetEndpoint(pendingNew,host,260,&explicitPort)) {
+            Alert(L"转换记录中的服务器目标名称无效。");return;
+        }
+        port=explicitPort?explicitPort:3389;
+        if(!explicitPort) {
+            CREDENTIALW* c=nullptr;
+            if(!CredReadW(pendingNew,CRED_TYPE_GENERIC,0,&c)) {
+                Failure(L"无法读取待测试的通用凭据。",GetLastError());return;
+            }
+            core::PortFromComment(c->Comment,&port);
+            CredFree(c);
+        }
+    } else if(!Fields(host,portText,user,&port,false)) return;
+    wchar_t endpoint[290]={},args[320]=L"/v:",systemPath[340]={};
+    if(!core::BuildEndpoint(host,port,endpoint,290) || !core::Append(args,320,endpoint)) {
+        Alert(L"无法生成有效的远程桌面连接目标。");return;
+    }
+    DWORD n=GetSystemDirectoryW(systemPath,340);
+    if(!n || n+11>=340 || !core::Append(systemPath,340,L"\\mstsc.exe")) {
+        Alert(L"无法定位系统远程桌面客户端 mstsc.exe。");return;
+    }
+    HINSTANCE result=ShellExecuteW(frame,L"open",systemPath,args,nullptr,SW_SHOWNORMAL);
+    if((ULONG_PTR)result<=32) {Alert(L"启动 mstsc.exe 失败。请确认系统安装了远程桌面客户端。");return;}
+    Status(conversionPending?L"已打开待验证目标。确认远程桌面登录成功后，才能删除旧凭据。":
+                              L"已启动 mstsc.exe。请确认远程登录是否成功。");
+}
+void Columns() {
+    const wchar_t* names[]={L"目标名称",L"用户名",L"凭据类型",L"端口"};
+    for(int i=0;i<4;++i) {
+        LVCOLUMNW col{};col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_SUBITEM;
+        col.pszText=(LPWSTR)names[i];col.cx=S(i==0?230:i==1?145:i==2?105:70);col.iSubItem=i;
+        SendMessageW(listView,LVM_INSERTCOLUMNW,(WPARAM)i,(LPARAM)&col);
+    }
+    SendMessageW(listView,LVM_SETEXTENDEDLISTVIEWSTYLE,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER,
+                 LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
+}
+void Init() {
+    Fonts();
+    whiteBrush=CreateSolidBrush(UI_WHITE);
+    navyBrush=CreateSolidBrush(UI_NAVY);
+    bgBrush=CreateSolidBrush(UI_BG);
+    softBrush=CreateSolidBrush(UI_SOFT);
+    title=Control(L"STATIC",L"RDP Credential Manager",0,0,ID_TITLE,large);
+    subtitle=Control(L"STATIC",L"Windows 远程桌面凭据管理  ·  本地存储  ·  转换及连接测试",0,0,ID_SUBTITLE,regular);
+    counts=Control(L"STATIC",L"正在加载凭据…",0,0,ID_COUNT,strong);
+    section=Control(L"STATIC",L"已保存的 RDP 凭据",0,0,ID_SECTION,strong);
+    formTitle=Control(L"STATIC",L"凭据详情  /  编辑",0,0,ID_FORMTITLE,strong);
+    hostLabel=Control(L"STATIC",L"服务器地址",0,0,ID_HOSTLABEL,regular);
+    portLabel=Control(L"STATIC",L"连接端口",0,0,ID_PORTLABEL,regular);
+    userLabel=Control(L"STATIC",L"远程登录用户名",0,0,ID_USERLABEL,regular);
+    passLabel=Control(L"STATIC",L"密码（更新通用凭据时可留空）",0,0,ID_PASSLABEL,regular);
+    targetLabel=Control(L"STATIC",L"凭据目标名称规则",0,0,ID_TARGETLABEL,regular);
+    preview=Control(L"STATIC",L"凭据目标名：",0,0,ID_PREVIEW,small);
+    help=Control(L"STATIC",L"请使目标名称与 MSTSC 实际保存的名称一致。转换域密码凭据时需重新输入密码，旧记录会保留至您确认登录成功。",0,0,ID_HELP,small);
+    searchLabel=Control(L"STATIC",L"搜索",0,0,ID_SEARCHLABEL,regular);
+    status=Control(L"STATIC",L"准备就绪",0,0,ID_STATUS,small);
+    hostBox=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,WS_EX_CLIENTEDGE,ID_HOST,regular);
+    portBox=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,WS_EX_CLIENTEDGE,ID_PORT,regular);
+    userBox=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,WS_EX_CLIENTEDGE,ID_USER,regular);
+    passBox=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL|ES_PASSWORD,WS_EX_CLIENTEDGE,ID_PASS,regular);
+    searchBox=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,WS_EX_CLIENTEDGE,ID_SEARCH,regular);
+    modeBox=Control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,0,ID_MODE,regular);
+    filterBox=Control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,0,ID_FILTER,regular);
+    listView=Control(L"SysListView32",L"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER,
+                     WS_EX_CLIENTEDGE,ID_LIST,regular);
+    newBtn=Control(L"BUTTON",L"新建凭据",WS_TABSTOP|BS_OWNERDRAW,0,ID_NEW,strong);
+    refreshBtn=Control(L"BUTTON",L"刷新列表",WS_TABSTOP|BS_OWNERDRAW,0,ID_REFRESH,regular);
+    saveBtn=Control(L"BUTTON",L"保存通用凭据",WS_TABSTOP|BS_OWNERDRAW,0,ID_SAVE,strong);
+    convertBtn=Control(L"BUTTON",L"转换通用凭据",WS_TABSTOP|BS_OWNERDRAW,0,ID_CONVERT,regular);
+    cleanupBtn=Control(L"BUTTON",L"确认成功并清理旧记录",WS_TABSTOP|BS_OWNERDRAW,0,ID_CLEANUP,regular);
+    cancelBtn=Control(L"BUTTON",L"取消转换并保留凭据",WS_TABSTOP|BS_OWNERDRAW,0,ID_CANCEL,regular);
+    connectBtn=Control(L"BUTTON",L"连接 / 测试 RDP",WS_TABSTOP|BS_OWNERDRAW,0,ID_CONNECT,strong);
+    deleteBtn=Control(L"BUTTON",L"删除选中凭据",WS_TABSTOP|BS_OWNERDRAW,0,ID_DELETE,regular);
+    SendMessageW(hostBox,EM_LIMITTEXT,253,0);
+    SendMessageW(portBox,EM_LIMITTEXT,5,0);
+    SendMessageW(userBox,EM_LIMITTEXT,513,0);
+    SendMessageW(passBox,EM_LIMITTEXT,512,0);
+    SendMessageW(searchBox,EM_LIMITTEXT,250,0);
+    SendMessageW(modeBox,CB_ADDSTRING,0,(LPARAM)L"仅主机名：TERMSRV/host");
+    SendMessageW(modeBox,CB_ADDSTRING,0,(LPARAM)L"主机名和端口：TERMSRV/host:port");
+    SendMessageW(modeBox,CB_SETCURSEL,0,0);
+    SendMessageW(filterBox,CB_ADDSTRING,0,(LPARAM)L"所有凭据");
+    SendMessageW(filterBox,CB_ADDSTRING,0,(LPARAM)L"仅通用凭据");
+    SendMessageW(filterBox,CB_ADDSTRING,0,(LPARAM)L"仅域密码凭据");
+    SendMessageW(filterBox,CB_SETCURSEL,0,0);
+    DWORD capacity=260;
+    if(!GetUserNameW(currentUser,&capacity)) currentUser[0]=0;
+    SetText(userBox,currentUser);
+    Columns();
+    SetWindowTheme(listView,L"Explorer",nullptr);
+    SendMessageW(listView,LVM_SETBKCOLOR,0,UI_WHITE);
+    SendMessageW(listView,LVM_SETTEXTBKCOLOR,0,UI_WHITE);
+    SendMessageW(listView,LVM_SETTEXTCOLOR,0,UI_TITLE);
+    Layout();PreviewTarget();UpdateActions();Refresh(false);
+}
+void Card(HANDLE dc,layout::Rectangle r,COLORREF fill,COLORREF outline,int radius=16) {
+    const int x=S(r.x), y=S(r.y-scrollY),w=S(r.w),h=S(r.h);
+    HBRUSH fillBrush=CreateSolidBrush(fill);
+    HPEN line=CreatePen(0,S(1),outline);
+    if(!fillBrush || !line) {
+        if(fillBrush) DeleteObject(fillBrush);
+        if(line) DeleteObject(line);
+        return;
+    }
+    HGDIOBJ oldBrush=SelectObject(dc,fillBrush),oldPen=SelectObject(dc,line);
+    RoundRect(dc,x,y,x+w,y+h,S(radius),S(radius));
+    SelectObject(dc,oldBrush);SelectObject(dc,oldPen);
+    DeleteObject(fillBrush);DeleteObject(line);
+}
+void PaintButton(DRAWITEMSTRUCT* draw) {
+    if(!draw || draw->CtlType!=ODT_BUTTON) return;
+    const UINT id=draw->CtlID;
+    const bool disabled=(draw->itemState&ODS_DISABLED)!=0;
+    const bool down=(draw->itemState&ODS_SELECTED)!=0;
+    COLORREF fill=UI_WHITE,textColor=UI_TITLE,border=UI_BORDER;
+    if(id==ID_SAVE || id==ID_CONNECT || id==ID_NEW) {
+        fill=down?0x00726109:UI_ACCENT;
+        textColor=UI_WHITE;
+        border=fill;
+    } else if(id==ID_CONVERT) {
+        fill=UI_SOFT;border=0x00D5C2AD;textColor=UI_NAVY;
+    } else if(id==ID_DELETE) {
+        textColor=UI_RED;
+    } else if(id==ID_CLEANUP) {
+        fill=UI_NAVY;border=UI_NAVY;textColor=UI_WHITE;
+    }
+    if(disabled) {fill=0x00F1F0ED;textColor=0x00AAA7A3;border=0x00E5E3E0;}
+    else if(down && id!=ID_SAVE && id!=ID_CONNECT && id!=ID_NEW) fill=UI_SOFT;
+    HBRUSH brush=CreateSolidBrush(fill);
+    HPEN pen=CreatePen(0,S(1),border);
+    if(!brush || !pen) {
+        if(brush) DeleteObject(brush);
+        if(pen) DeleteObject(pen);
+        return;
+    }
+    HANDLE dc=draw->hDC;
+    HGDIOBJ oldBrush=SelectObject(dc,brush);
+    HGDIOBJ oldPen=SelectObject(dc,pen);
+    RECT r=draw->rcItem;
+    RoundRect(dc,r.left+S(1),r.top+S(1),r.right-S(1),r.bottom-S(1),S(12),S(12));
+    SelectObject(dc,oldBrush);SelectObject(dc,oldPen);
+    DeleteObject(brush);DeleteObject(pen);
+    wchar_t name[160]={};GetWindowTextW(draw->hwndItem,name,160);
+    SetBkMode(dc,TRANSPARENT);SetTextColor(dc,textColor);
+    HFONT font=(id==ID_NEW||id==ID_SAVE||id==ID_CONNECT)?strong:regular;
+    HGDIOBJ previous=SelectObject(dc,font);
+    RECT textRect=r;
+    textRect.left+=S(7);textRect.right-=S(7);
+    DrawTextW(dc,name,-1,&textRect,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+    SelectObject(dc,previous);
+    if(draw->itemState&ODS_FOCUS) {
+        RECT focus=r;focus.left+=S(5);focus.top+=S(5);
+        focus.right-=S(5);focus.bottom-=S(5);
+        DrawFocusRect(dc,&focus);
+    }
+}
+LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wParam,LPARAM lParam) {
+    switch(message) {
+        case WM_CREATE: frame=window;dpi=(int)GetDpiForWindow(window);if(!dpi) dpi=96;Init();return 0;
+        case WM_SIZE: Layout();return 0;
+        case WM_CLOSE:
+            if(conversionPending && MessageBoxW(window,
+               L"有一条凭据转换正在等待连接确认。关闭程序后，两条凭据都会保留。\r\n\r\n确定关闭吗？",
+               L"确认退出",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) return 0;
+            return DefWindowProcW(window,message,wParam,lParam);
+        case WM_VSCROLL: {
+            SCROLLINFO si{sizeof(si),SIF_ALL,0,0,0,0,0};
+            GetScrollInfo(window,SB_VERT,&si);
+            int next=scrollY;
+            switch((int)(wParam&0xffff)) {
+                case SB_LINEUP:next-=40;break;
+                case SB_LINEDOWN:next+=40;break;
+                case SB_PAGEUP:next-=(int)si.nPage;break;
+                case SB_PAGEDOWN:next+=(int)si.nPage;break;
+                case SB_THUMBPOSITION:case SB_THUMBTRACK:next=si.nTrackPos;break;
+                case SB_TOP:next=0;break;
+                case SB_BOTTOM:next=geometry.canvasHeight;break;
+            }
+            ScrollTo(next);return 0;
+        }
+        case WM_MOUSEWHEEL: {
+            short ticks=(short)((wParam>>16)&0xffff);
+            ScrollTo(scrollY-(int)ticks*65/120);return 0;
+        }
+        case WM_DRAWITEM:
+            PaintButton((DRAWITEMSTRUCT*)lParam);return 1;
+        case WM_GETMINMAXINFO: {
+            MINMAXINFO* min=(MINMAXINFO*)lParam;
+            int maxW=GetSystemMetrics(SM_CXSCREEN)-S(36);
+            int maxH=GetSystemMetrics(SM_CYSCREEN)-S(36);
+            min->ptMinTrackSize.x=S(560)<maxW?S(560):maxW;
+            min->ptMinTrackSize.y=S(390)<maxH?S(390):maxH;
+            return 0;
+        }
+        case WM_DPICHANGED: {
+            dpi=(int)(wParam&0xffff);if(!dpi) dpi=96;
+            RECT* suggested=(RECT*)lParam;
+            SetWindowPos(window,nullptr,suggested->left,suggested->top,
+                         suggested->right-suggested->left,suggested->bottom-suggested->top,
+                         SWP_NOZORDER|SWP_NOACTIVATE);
+            Fonts();Layout();return 0;
+        }
+        case WM_NOTIFY: {
+            NMHDR* nm=(NMHDR*)lParam;
+            if(nm && nm->idFrom==ID_LIST && !uiUpdating) {
+                if(nm->code==LVN_ITEMCHANGED) {
+                    int index=SelectedFromList();
+                    if(index>=0 && index!=selected) Select(index);
+                    else if(index<0 && selected>=0) {
+                        selected=-1;UpdateActions();
+                        Status(L"未选中任何列表记录，可继续编辑右侧内容或新建凭据。");
+                    }
+                } else if(nm->code==NM_DBLCLK && selected>=0) Connect();
+            }
+            return 0;
+        }
+        case WM_COMMAND: {
+            int id=(int)(wParam&0xffff),event=(int)((wParam>>16)&0xffff);
+            if(id==ID_NEW) ClearEditor();
+            else if(id==ID_REFRESH) Refresh();
+            else if(id==ID_SAVE) Save(false);
+            else if(id==ID_CONVERT) Save(true);
+            else if(id==ID_CLEANUP) Cleanup();
+            else if(id==ID_CANCEL) CancelConversion();
+            else if(id==ID_CONNECT) Connect();
+            else if(id==ID_DELETE) DeleteSelected();
+            else if(id==ID_FILTER && event==CBN_SELCHANGE) FilterRows();
+            else if(id==ID_SEARCH && event==EN_CHANGE && !uiUpdating) FilterRows();
+            else if((id==ID_HOST||id==ID_PORT) && event==EN_CHANGE && !uiUpdating) PreviewTarget();
+            else if(id==ID_MODE && event==CBN_SELCHANGE && !uiUpdating) PreviewTarget();
+            return 0;
+        }
+        case WM_CTLCOLORSTATIC: {
+            HANDLE dc=(HANDLE)wParam;HWND h=(HWND)lParam;
+            int id=GetDlgCtrlID(h);
+            SetBkMode(dc,TRANSPARENT);
+            if(id==ID_TITLE || id==ID_SUBTITLE) {
+                SetTextColor(dc,UI_WHITE);return (LRESULT)navyBrush;
+            }
+            SetTextColor(dc,id==ID_PREVIEW||id==ID_HELP||id==ID_STATUS?UI_MUTED:UI_TITLE);
+            if(id==ID_COUNT) return (LRESULT)softBrush;
+            if(id==ID_STATUS) return (LRESULT)bgBrush;
+            return (LRESULT)whiteBrush;
+        }
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT ps{};HANDLE dc=BeginPaint(window,&ps);
+            RECT rc{};GetClientRect(window,&rc);
+            FillRect(dc,&rc,bgBrush);
+            RECT header{0,-S(scrollY),rc.right,S(94-scrollY)};
+            FillRect(dc,&header,navyBrush);
+            Card(dc,geometry.summary,UI_SOFT,UI_SOFT,16);
+            Card(dc,geometry.leftCard,UI_WHITE,UI_BORDER,18);
+            Card(dc,geometry.rightCard,UI_WHITE,UI_BORDER,18);
+            EndPaint(window,&ps);return 0;
+        }
+        case WM_DESTROY:
+            SetText(passBox,L"");
+            if(regular) DeleteObject(regular);if(strong) DeleteObject(strong);
+            if(large) DeleteObject(large);if(small) DeleteObject(small);
+            if(whiteBrush) DeleteObject(whiteBrush);if(navyBrush) DeleteObject(navyBrush);
+            if(bgBrush) DeleteObject(bgBrush);
+            if(softBrush) DeleteObject(softBrush);
+            if(applicationIcon) DestroyIcon(applicationIcon);
+            if(smallIcon) DestroyIcon(smallIcon);
+            PostQuitMessage(0);return 0;
+    }
+    return DefWindowProcW(window,message,wParam,lParam);
+}
+int Run() {
+    application=GetModuleHandleW(nullptr);
+    SetProcessDpiAwarenessContext((HANDLE)(LONG_PTR)-4);
+    INITCOMMONCONTROLSEX icc{sizeof(INITCOMMONCONTROLSEX),ICC_LISTVIEW_CLASSES};
+    if(!InitCommonControlsEx(&icc)) return 1;
+    WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.lpfnWndProc=WindowProc;wc.hInstance=application;
+    wc.hCursor=LoadCursorW(nullptr,(LPCWSTR)(ULONG_PTR)32512);
+    wchar_t iconSource[340]={};
+    UINT dirLength=GetSystemDirectoryW(iconSource,340);
+    if(dirLength && dirLength+12<340 && core::Append(iconSource,340,L"\\mstsc.exe"))
+        ExtractIconExW(iconSource,0,&applicationIcon,&smallIcon,1);
+    wc.hIcon=applicationIcon;wc.hIconSm=smallIcon;
+    wc.hbrBackground=(HBRUSH)(ULONG_PTR)(COLOR_WINDOW+1);
+    wc.lpszClassName=L"RDPCredManagerPro";
+    if(!RegisterClassExW(&wc)) return 2;
+    RECT work={0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN)};
+    SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
+    UINT screenDpi=GetDpiForSystem();if(!screenDpi) screenDpi=96;
+    int workW=(int)(work.right-work.left),workH=(int)(work.bottom-work.top);
+    int winW=(int)(1160*screenDpi/96),winH=(int)(920*screenDpi/96);
+    if(winW>workW-24) winW=workW-24;
+    if(winH>workH-24) winH=workH-24;
+    HWND window=CreateWindowExW(0,wc.lpszClassName,L"RDP Credential Manager 4.0",
+        WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_VSCROLL,
+        work.left+(workW-winW)/2,work.top+(workH-winH)/2,winW,winH,
+        nullptr,nullptr,application,nullptr);
+    if(!window) return 3;
+    ShowWindow(window,SW_SHOW);UpdateWindow(window);
+    MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0) {
+        if(!IsDialogMessageW(window,&msg)) {TranslateMessage(&msg);DispatchMessageW(&msg);}
+    }
+    return (int)msg.wParam;
+}
+} // namespace
+extern "C" void WINAPI WinMainCRTStartup() {ExitProcess((UINT)Run());}
+extern "C" void* __cdecl memcpy(void* dst,const void* src,unsigned long long size) {
+    volatile BYTE* d=(volatile BYTE*)dst;
+    const volatile BYTE* s=(const volatile BYTE*)src;
+    for(unsigned long long i=0;i<size;++i) d[i]=s[i];
+    return dst;
+}
+extern "C" void* __cdecl memset(void* dst,int value,unsigned long long size) {
+    volatile BYTE* d=(volatile BYTE*)dst;
+    for(unsigned long long i=0;i<size;++i) d[i]=(BYTE)value;
+    return dst;
+}
