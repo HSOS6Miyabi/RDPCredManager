@@ -64,7 +64,7 @@ int wmain() {
         // WM_COMMAND for selected target name rule (same event sent by user choice).
         SendMessageW(window,WM_COMMAND,MAKEWPARAM(ID_MODE,CBN_SELCHANGE),reinterpret_cast<LPARAM>(mode));
         // Queue a click so unexpected modal dialogs cannot block the test process.
-        PostMessageW(save,BM_CLICK,0,0);
+        PostMessageW(window,WM_COMMAND,MAKEWPARAM(ID_SAVE,BN_CLICKED),reinterpret_cast<LPARAM>(save));
         if(!WaitForCredential(oldTarget)) {Error("Save did not persist host:port credential");goto done;}
         // After Save the GUI should display the newly selected GENERIC credential.
         wchar_t caption[130]{};
@@ -76,7 +76,7 @@ int wmain() {
         SetWindowTextW(port,L"3389");
         SendMessageW(mode,CB_SETCURSEL,0,0);
         SendMessageW(window,WM_COMMAND,MAKEWPARAM(ID_MODE,CBN_SELCHANGE),reinterpret_cast<LPARAM>(mode));
-        PostMessageW(save,BM_CLICK,0,0);
+        PostMessageW(window,WM_COMMAND,MAKEWPARAM(ID_SAVE,BN_CLICKED),reinterpret_cast<LPARAM>(save));
         if(!WaitForCredential(newTarget)) {Error("Edit did not create default-port credential");goto done;}
         if(!WaitForCredential(oldTarget)) {Error("Editing deleted the original credential");goto done;}
         result=0;
