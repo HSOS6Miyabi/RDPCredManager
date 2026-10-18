@@ -38,19 +38,28 @@ std::size_t OffsetForRva(const Bytes& b, const std::vector<Section>& sections, s
     }
     throw std::runtime_error("Resource RVA not mapped to a PE section");
 }
-std::string EmbeddedManifest(const Bytes& b) {
+std::string EmbeddedManifest(const Bytes& b, const std::string& expectedArchitecture) {
     Require(U16(b, 0) == 0x5a4d, "DOS header missing");
     std::size_t pe = U32(b, 0x3c);
     Require(U32(b, pe) == 0x00004550, "PE header missing");
-    Require(U16(b, pe + 4) == 0x8664, "Executable is not Windows x64");
+    const std::uint16_t machine=U16(b, pe + 4);
+    const std::uint16_t expectedMachine=expectedArchitecture=="x86" ? 0x014c :
+        expectedArchitecture=="x64" ? 0x8664 :
+        expectedArchitecture=="arm64" ? 0xaa64 : 0;
+    Require(expectedMachine!=0, "Unknown architecture: expected x86, x64 or arm64");
+    Require(machine==expectedMachine, "PE machine type does not match the expected architecture");
     std::uint16_t count = U16(b, pe + 6);
     std::uint16_t optionalSize = U16(b, pe + 20);
     std::size_t opt = pe + 24;
-    Require(U16(b, opt) == 0x20b, "PE32+ optional header required");
+    const bool is32=expectedArchitecture=="x86";
+    Require(U16(b, opt)==(is32 ? 0x10b : 0x20b),
+            "PE optional header format does not match target architecture");
     Require(U16(b, opt + 68) == 2, "Windows graphical subsystem required");
-    Require(optionalSize >= 136, "PE optional header is incomplete");
-    Require(U32(b, opt + 108) >= 3, "PE lacks resource directory entry");
-    std::uint32_t resourcesRva = U32(b, opt + 112 + 2 * 8);
+    const std::size_t dirCountOffset=is32?92:108;
+    const std::size_t dirStartOffset=is32?96:112;
+    Require(optionalSize >= dirStartOffset+24, "PE optional header is incomplete");
+    Require(U32(b, opt + dirCountOffset) >= 3, "PE lacks resource directory entry");
+    std::uint32_t resourcesRva = U32(b, opt + dirStartOffset + 2 * 8);
     Require(resourcesRva != 0, "PE resource directory missing");
     std::vector<Section> sections;
     for (std::size_t i = 0; i < count; ++i) {
@@ -99,16 +108,17 @@ void Verify(const std::string& text) {
     Require(contains("Microsoft.Windows.Common-Controls") && contains("version=\"6.0.0.0\""),
             "Common Controls v6 dependency missing");
     Require(contains("PerMonitorV2"), "Per-monitor V2 DPI awareness missing");
+    Require(contains("processorArchitecture=\"*\""), "Architecture-neutral manifest identity missing");
 }
 }
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "Usage: manifest_verify executable.exe");
+        Require(argc == 3, "Usage: manifest_verify executable.exe x86|x64|arm64");
         std::ifstream input(argv[1], std::ios::binary);
         Require(input.good(), "Cannot open Windows executable");
         Bytes data{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-        Verify(EmbeddedManifest(data));
-        std::cout << "PE x64 embedded manifest: verified\n";
+        Verify(EmbeddedManifest(data, argv[2]));
+        std::cout << "PE embedded manifest: verified\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "Manifest validation failed: " << e.what() << '\n';
