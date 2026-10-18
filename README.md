@@ -57,7 +57,7 @@
 
 ## 构建
 
-从 Visual Studio 2022 x64 Native Tools Command Prompt 运行：
+在与目标架构对应的 Visual Studio 开发者命令提示符中运行（以下示例构建 x64）：
 
 ```bat
 build_windows.cmd
@@ -71,7 +71,7 @@ build_windows.cmd
 bash build_cross.sh
 ```
 
-该脚本通过项目包含的精简 Windows ABI 声明构建 Windows x64 可执行文件，最终程序使用 Windows 系统 DLL。
+该脚本通过项目包含的 Win32 ABI 声明分别构建 Windows x86、x64 和 ARM64 可执行文件，最终程序使用 Windows 系统 DLL。
 
 ## 测试
 
@@ -86,7 +86,7 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined tests/
 
 布局测试覆盖多种窗口宽高与 100%、125%、150%、200%、250%、300% DPI 换算，检查控件尺寸、面板范围和滚动位置。
 
-构建脚本还会编译并运行 `tests/manifest_verify.cpp`，检查最终 Windows EXE 的 PE x64 结构和 RT_MANIFEST 资源，核验 UAC 执行级别、Common Controls v6 和 Per-Monitor V2 属性。Visual Studio / CMake 工程可通过 CTest 运行相同检查。
+构建脚本还会编译并运行 `tests/manifest_verify.cpp`，检查对应架构的 PE32 或 PE32+ 结构和 RT_MANIFEST 资源，核验 UAC 执行级别、Common Controls v6 和 Per-Monitor V2 属性。Visual Studio / CMake 工程可通过 CTest 运行相同检查。
 
 交叉编译环境已检查编译结果和系统 DLL 导入。Windows GUI 实际操作、跨显示器移动及远程桌面连接仍需 Windows 实机测试。
 
@@ -106,7 +106,7 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined tests/
 
 ## GitHub Actions
 
-`.github/workflows/windows.yml` 在 Windows Server 2022 GitHub Hosted Runner 中使用 MSVC x64 编译，执行原生逻辑测试、HiDPI 布局测试、真实 Windows Credential Manager 临时凭据的读写枚举与删除测试、PE Manifest 检查，以及在 GUI 进程内部执行的凭据保存、端口编辑、列表选中状态和临时凭据清理测试。
+`.github/workflows/windows.yml` 使用 MSVC 构建 x86、x64 和 ARM64 程序，在 Windows Server 2022 和原生 Windows ARM64 Runner 中分别测试。测试包含核心逻辑、HiDPI 布局、Windows Credential Manager 临时凭据的读写和删除、PE Manifest，以及 GUI 中的保存、端口编辑和选中状态。
 
 主分支首次推送后，若不存在 `v4.0.0` Release，则由完成测试的工作流创建对应版本并上传 EXE、源代码压缩包和 SHA-256 文件。今后可推送 `v*` 版本标签触发新版本的测试与 Release 发布。
 
