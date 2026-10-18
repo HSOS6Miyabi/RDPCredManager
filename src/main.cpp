@@ -2,6 +2,7 @@
 #include "core.h"
 #include "layout.h"
 #include "favorites.h"
+#include "ui_geometry.h"
 
 // RDP Credential Manager — native Windows x86/x64/ARM64 GUI, no third-party runtime.
 namespace {
@@ -143,7 +144,8 @@ void Layout() {
     Pos(searchLabel,geometry.searchLabel);Pos(searchBox,geometry.search);
     Pos(filterBox,geometry.filter);Pos(listView,geometry.list);
     Pos(connectBtn,geometry.connect);Pos(deleteBtn,geometry.remove);
-    Pos(formTitle,geometry.editorHeading);
+    const auto detailsLayout=ui_geometry::Editor(geometry);
+    Pos(formTitle,detailsLayout.heading);
     Pos(hostLabel,geometry.hostLabel);Pos(portLabel,geometry.portLabel);
     Pos(hostBox,geometry.host);Pos(portBox,geometry.port);
     Pos(userLabel,geometry.userLabel);Pos(userBox,geometry.user);
@@ -154,14 +156,12 @@ void Layout() {
     Pos(cleanupBtn,geometry.cleanup);Pos(cancelBtn,geometry.cancel);
     Pos(status,geometry.status);
     const auto summary=geometry.summary;
-    Pos(favoritesTabBtn,{summary.x+14,summary.y+10,134,38});
-    Pos(credentialsTabBtn,{summary.x+160,summary.y+10,146,38});
-    // The summary label occupies the remaining horizontal space.
-    const int summaryStart=summary.x+320;
-    Pos(counts,{summaryStart,summary.y+12,
-                summary.x+summary.w-summaryStart-12,34});
-    Pos(toggleFavoriteBtn,{geometry.editorHeading.x,geometry.editorHeading.y+40,
-                           geometry.editorHeading.w,31});
+    const auto tabs=ui_geometry::Tabs(geometry);
+    Pos(favoritesTabBtn,tabs.favorites);
+    Pos(credentialsTabBtn,tabs.credentials);
+    if(tabs.showSummary) Pos(counts,tabs.summary);
+    ShowWindow(counts,tabs.showSummary?SW_SHOW:SW_HIDE);
+    Pos(toggleFavoriteBtn,detailsLayout.star);
     Pos(favoritesHeading,geometry.listHeading);
     Pos(favoritesEditHeading,geometry.editorHeading);
     Pos(favoritesSearch,{geometry.search.x,geometry.search.y,
@@ -174,8 +174,8 @@ void Layout() {
     Pos(favoritesName,{fx,y+25,fw,36});
     Pos(favoritesPortLabel,{fx,y+82,fw,22});
     Pos(favoritesPort,{fx,y+108,fw,36});
-    Pos(favoritesInfo,{fx,y+166,fw,70});
-    Pos(favoritesHint,{fx,y+256,fw,90});
+    Pos(favoritesInfo,detailsLayout.info);
+    Pos(favoritesHint,detailsLayout.hint);
     Pos(favoritesSave,geometry.save);Pos(favoritesEdit,geometry.convert);
     int favWidth=geometry.list.w-10;
     SendMessageW(favoritesList,LVM_SETCOLUMNWIDTH,0,(LPARAM)S(favWidth*39/100));
@@ -980,7 +980,8 @@ void Init() {
     favoritesEditHeading=Control(L"STATIC",L"会话详情 · 自定义",0,0,ID_FAVORITES_EDITHEADING,strong);
     favoritesNameLabel=Control(L"STATIC",L"会话显示名称（可留空）",0,0,ID_FAVORITES_NAMELABEL,regular);
     favoritesPortLabel=Control(L"STATIC",L"连接端口",0,0,ID_FAVORITES_PORTLABEL,regular);
-    favoritesInfo=Control(L"STATIC",L"",0,0,ID_FAVORITES_INFO,regular);
+    favoritesInfo=Control(L"EDIT",L"",ES_MULTILINE|ES_AUTOVSCROLL|ES_READONLY|WS_VSCROLL|WS_TABSTOP,
+                          WS_EX_CLIENTEDGE,ID_FAVORITES_INFO,regular);
     favoritesHint=Control(L"STATIC",L"双击收藏的会话即可启动。此处可自定义名称和连接端口。收藏夹只保存会话信息，登录密码仍由 Windows 管理。",0,0,ID_FAVORITES_HINT,small);
     favoritesSearch=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,WS_EX_CLIENTEDGE,ID_FAVORITES_SEARCH,regular);
     favoritesName=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,WS_EX_CLIENTEDGE,ID_FAVORITES_NAME,regular);
@@ -1229,6 +1230,13 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wParam,LPARAM lParam
 int NativeGuiSelfTest() {
     headlessSelfTest=true;
     if(!IsWindowEnabled(saveBtn) || !IsWindowEnabled(portBox)) return 30;
+    const auto tabRect=ui_geometry::Tabs(geometry);
+    const auto editorRect=ui_geometry::Editor(geometry);
+    if(tabRect.favorites.w<200 || tabRect.credentials.w<200 ||
+       ui_geometry::Overlaps(tabRect.favorites,tabRect.credentials) ||
+       ui_geometry::Overlaps(editorRect.star,geometry.hostLabel) ||
+       editorRect.info.h<105 ||
+       ui_geometry::Overlaps(editorRect.info,editorRect.hint)) return 49;
     wchar_t host[260]{},portText[16]{};
     GetWindowTextW(hostBox,host,260);GetWindowTextW(portBox,portText,16);
     if(host[0] || portText[0]) return 31;
@@ -1351,7 +1359,7 @@ int Run() {
     int winW=(int)(1160*screenDpi/96),winH=(int)(920*screenDpi/96);
     if(winW>workW-24) winW=workW-24;
     if(winH>workH-24) winH=workH-24;
-    HWND window=CreateWindowExW(0,wc.lpszClassName,L"RDP Credential Manager 4.2",
+    HWND window=CreateWindowExW(0,wc.lpszClassName,L"RDP Credential Manager 4.2.1",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_VSCROLL,
         work.left+(workW-winW)/2,work.top+(workH-winH)/2,winW,winH,
         nullptr,nullptr,application,nullptr);

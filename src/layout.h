@@ -17,7 +17,7 @@ inline Geometry Calculate(int width,int height) {
     if(width<540) width=540;
     if(height<320) height=320;
     Geometry g{};
-    g.stacked=width<900;
+    g.stacked=width<1120;
     const int margin=24,gap=18;
     g.canvasHeight = g.stacked ? (height>1340?height:1340) : (height>850?height:850);
     int cw=g.canvasHeight;
