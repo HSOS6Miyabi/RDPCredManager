@@ -8,6 +8,15 @@
 namespace {
 constexpr int ID_HOST=100,ID_PORT=101,ID_USER=102,ID_PASS=103,ID_MODE=104;
 constexpr int ID_SAVE=122,ID_LIST=107;
+bool PutText(HWND h,const wchar_t* text) {
+    SendMessageW(h,WM_SETTEXT,0,reinterpret_cast<LPARAM>(text));
+    wchar_t buffer[520]{};
+    SendMessageW(h,WM_GETTEXT,520,reinterpret_cast<LPARAM>(buffer));
+    return std::wcscmp(text,buffer)==0;
+}
+void ReadText(HWND h,wchar_t* out,int len) {
+    SendMessageW(h,WM_GETTEXT,static_cast<WPARAM>(len),reinterpret_cast<LPARAM>(out));
+}
 void Error(const char* msg) { std::fprintf(stderr,"GUI test: %s (Win32 %lu)\n",msg,GetLastError()); }
 bool WaitForCredential(const wchar_t* target) {
     for(int tries=0;tries<40;++tries) {
@@ -49,17 +58,18 @@ int wmain() {
         HWND user=GetDlgItem(window,ID_USER),password=GetDlgItem(window,ID_PASS);
         HWND mode=GetDlgItem(window,ID_MODE),save=GetDlgItem(window,ID_SAVE);
         wchar_t value[120]{};
-        GetWindowTextW(host,value,120);
+        ReadText(host,value,120);
         if(value[0]) {Error("Host must be empty on startup");goto done;}
-        GetWindowTextW(port,value,120);
+        ReadText(port,value,120);
         if(value[0]) {Error("Port must be empty on startup");goto done;}
         if(!IsWindowEnabled(port) || !IsWindowEnabled(save)) {
             Error("Port and Save must be enabled");goto done;
         }
-        SetWindowTextW(host,hostname);
-        SetWindowTextW(port,L"3721");
-        SetWindowTextW(user,L"CI\\DisposableUser");
-        SetWindowTextW(password,L"disposable-ci-test-password");
+        if(!PutText(host,hostname) || !PutText(port,L"3721") ||
+           !PutText(user,L"CI\\DisposableUser") ||
+           !PutText(password,L"disposable-ci-test-password")) {
+            Error("Failed to populate remote-process input controls");goto done;
+        }
         SendMessageW(mode,CB_SETCURSEL,1,0);
         // WM_COMMAND for selected target name rule (same event sent by user choice).
         SendMessageW(window,WM_COMMAND,MAKEWPARAM(ID_MODE,CBN_SELCHANGE),reinterpret_cast<LPARAM>(mode));
@@ -68,12 +78,12 @@ int wmain() {
         if(!WaitForCredential(oldTarget)) {Error("Save did not persist host:port credential");goto done;}
         // After Save the GUI should display the newly selected GENERIC credential.
         wchar_t caption[130]{};
-        GetWindowTextW(GetDlgItem(window,14),caption,130);
+        ReadText(GetDlgItem(window,14),caption,130);
         if(!std::wcsstr(caption,L"通用凭据")) {
             Error("Editor did not select generic credential after saving");goto done;
         }
         // Change to default port, retaining the existing password and adding a new target.
-        SetWindowTextW(port,L"3389");
+        if(!PutText(port,L"3389")) {Error("Failed to edit port");goto done;}
         SendMessageW(mode,CB_SETCURSEL,0,0);
         SendMessageW(window,WM_COMMAND,MAKEWPARAM(ID_MODE,CBN_SELCHANGE),reinterpret_cast<LPARAM>(mode));
         PostMessageW(window,WM_COMMAND,MAKEWPARAM(ID_SAVE,BN_CLICKED),reinterpret_cast<LPARAM>(save));
