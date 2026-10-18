@@ -655,7 +655,8 @@ const wchar_t* FavoritesPath() {
 HKEY FavoritesRoot() {return (HKEY)(LONG_PTR)(-2147483647);}
 void LoadFavorites() {
     favoriteCount=0;selectedFavorite=-1;
-    bookmarks={};favoriteStoreWritable=true;
+    Wipe((wchar_t*)&bookmarks,(unsigned)(sizeof(bookmarks)/sizeof(wchar_t)));
+    favoriteStoreWritable=true;
     HKEY key=nullptr;
     LONG result=RegOpenKeyExW(FavoritesRoot(),FavoritesPath(),0,KEY_QUERY_VALUE,&key);
     if(result==ERROR_FILE_NOT_FOUND) return;
