@@ -2,9 +2,9 @@
 #include <initializer_list>
 #include <cassert>
 int main(){
-    for(int w: {540,640,760,899,900,960,1024,1366,1600}) for(int h: {320,430,540,700,900,1200}){
+    for(int w: {540,640,760,899,900,960,1024,1119,1120,1366,1600}) for(int h: {320,430,540,700,900,1200}){
         auto g=layout::Calculate(w,h);
-        assert(g.stacked==(w<900));
+        assert(g.stacked==(w<1120));
         assert(g.canvasHeight>=h);
         assert(g.title.x>=0 && g.title.y>=0);
         assert(g.leftCard.x>=0 && g.leftCard.x+g.leftCard.w<=w);
