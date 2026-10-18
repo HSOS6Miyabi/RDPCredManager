@@ -1,6 +1,6 @@
 # Windows 实机检查
 
-在 Windows x86、x64 或 ARM64 系统中，检查以下操作：
+在 Windows x86、x64 和 ARM64 系统中，检查以下操作：
 
 1. 在 100%、125%、150% 和 200% 显示缩放下启动窗口，检查标题、输入框、按钮及列表是否完整呈现。
 2. 将窗口拖至使用不同缩放设置的显示器，确认字体大小、鼠标点击区域和滚动行为保持正确。
@@ -19,9 +19,14 @@
 
 Windows Runner 执行 `tests/win_gui_test.cpp`，该测试启动 `RDPCredManager.exe --self-test`，由 GUI 进程自身设置输入框并进行保存。测试会核对端口编辑、保存后的通用凭据选中状态、复制已有密码到新目标，以及两条临时凭据的清理。仅创建使用 `.invalid` 主机名的临时测试记录，不连接外部服务器。
 
-## 三架构 CI 验证
 
-- PE x86 机器类型 `0x014c`，使用 PE32；x64 为 `0x8664`，ARM64 为 `0xaa64`，均使用 PE32+。
-- 检查 UAC、Common Controls v6、Per-Monitor V2 的内嵌 Manifest。
-- x86/x64 在 Windows x64 Runner 原生执行（x86 通过 WOW64），ARM64 在 Windows ARM64 Runner 原生执行。
-- 每种架构运行凭据保存、读取、删除和 GUI 启动、端口编辑及列表选中测试；均使用临时凭据，不建立外部 RDP 连接。
+## 架构验证
+
+- PE 机器类型必须分别为 x86 `0x014c`、x64 `0x8664`、ARM64 `0xaa64`。
+- x86 使用 PE32，x64 与 ARM64 使用 PE32+。内嵌 Manifest 声明 Common Controls v6、`asInvoker`、Per-Monitor V2。
+- Windows x86/x64 自动运行主程序自测，ARM64 在独立 Windows 11 ARM64 Runner 上运行相同检查。
+- 所有自动测试均使用独立、可删除的临时凭据，不连接实际远程服务器。
+
+## 收藏夹测试
+
+`tests/favorites_test.cpp` 验证同一主机不同凭据类型、重复收藏、会话名称和端口修改、取消收藏。Windows 图形界面集成测试在专用注册表子键中读写收藏项，验证跨进程存储所需的数据格式和删除凭据后收藏项保留的行为。

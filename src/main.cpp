@@ -1,6 +1,7 @@
 #include "win32_min.h"
 #include "core.h"
 #include "layout.h"
+#include "favorites.h"
 
 // RDP Credential Manager — native Windows x86/x64/ARM64 GUI, no third-party runtime.
 namespace {
@@ -12,6 +13,11 @@ constexpr int ID_HOST=100,ID_PORT=101,ID_USER=102,ID_PASS=103,ID_MODE=104;
 constexpr int ID_SEARCH=105,ID_FILTER=106,ID_LIST=107;
 constexpr int ID_NEW=120,ID_REFRESH=121,ID_SAVE=122,ID_CONVERT=123;
 constexpr int ID_CLEANUP=124,ID_CONNECT=125,ID_DELETE=126,ID_CANCEL=127;
+constexpr int ID_TAB_FAVORITES=130,ID_TAB_CREDENTIALS=131,ID_TOGGLE_FAVORITE=132;
+constexpr int ID_FAVORITES_LIST=140,ID_FAVORITES_SEARCH=141,ID_FAVORITES_NAME=142,ID_FAVORITES_PORT=143;
+constexpr int ID_FAVORITES_CONNECT=144,ID_FAVORITES_REMOVE=145,ID_FAVORITES_SAVE=146,ID_FAVORITES_EDIT=147;
+constexpr int ID_FAVORITES_HEADING=148,ID_FAVORITES_EDITHEADING=149,ID_FAVORITES_NAMELABEL=150;
+constexpr int ID_FAVORITES_PORTLABEL=151,ID_FAVORITES_INFO=152,ID_FAVORITES_HINT=153;
 constexpr DWORD UI_BG=0x00FAF7F3, UI_WHITE=0x00FFFFFF, UI_NAVY=0x003B2914;
 constexpr DWORD UI_ACCENT=0x0088730B, UI_SOFT=0x00F8F2E9,UI_BORDER=0x00E9E3DA;
 constexpr DWORD UI_MUTED=0x00877969, UI_TITLE=0x00463420,UI_RED=0x003B3BC0;
@@ -26,6 +32,18 @@ Entry items[MAX_ENTRIES]{};
 unsigned count=0,shown=0;
 unsigned visible[MAX_ENTRIES]{};
 int selected=-1;
+struct BookmarkStore {
+    DWORD signature,version,size;
+    favorites::Entry entries[favorites::Limit];
+};
+static_assert(sizeof(favorites::Entry)==1240,"Bookmark format must match all Windows architectures");
+BookmarkStore bookmarks{};
+BookmarkStore undoBookmarks{};
+unsigned favoriteCount=0, favoriteShown=0;
+unsigned favoriteVisible[favorites::Limit]{};
+int selectedFavorite=-1;
+bool favoriteStoreWritable=true;
+bool favoritesTab=false;
 wchar_t currentUser[260]{};
 wchar_t pendingOld[520]{},pendingNew[520]{},pendingUser[520]{};
 bool conversionPending=false;
@@ -37,6 +55,11 @@ HWND hostBox=nullptr,portBox=nullptr,userBox=nullptr,passBox=nullptr,modeBox=nul
 HWND searchBox=nullptr,filterBox=nullptr,listView=nullptr;
 HWND newBtn=nullptr,refreshBtn=nullptr,saveBtn=nullptr,convertBtn=nullptr;
 HWND cleanupBtn=nullptr,cancelBtn=nullptr,connectBtn=nullptr,deleteBtn=nullptr;
+HWND favoritesTabBtn=nullptr,credentialsTabBtn=nullptr,toggleFavoriteBtn=nullptr;
+HWND favoritesList=nullptr,favoritesSearch=nullptr,favoritesName=nullptr,favoritesPort=nullptr;
+HWND favoritesConnect=nullptr,favoritesRemove=nullptr,favoritesSave=nullptr,favoritesEdit=nullptr;
+HWND favoritesHeading=nullptr,favoritesEditHeading=nullptr,favoritesNameLabel=nullptr;
+HWND favoritesPortLabel=nullptr,favoritesInfo=nullptr,favoritesHint=nullptr;
 HBRUSH whiteBrush=nullptr,navyBrush=nullptr,bgBrush=nullptr,softBrush=nullptr;
 HFONT regular=nullptr,strong=nullptr,large=nullptr,small=nullptr;
 HINSTANCE application=nullptr;
@@ -45,6 +68,11 @@ int dpi=96,scrollY=0;
 layout::Geometry geometry{};
 bool uiUpdating=false;
 bool headlessSelfTest=false;
+void RefreshFavorites(bool preserveSelection=true);
+void UpdateFavoriteActions();
+void ShowCurrentTab();
+void SelectFavorite(int index);
+void ChangeTab(bool favorite);
 
 int S(int v) {return (v*dpi+48)/96;}
 void Wipe(wchar_t* data,unsigned size) {volatile wchar_t* p=data;while(size--) *p++=0;}
@@ -80,9 +108,13 @@ void Fonts() {
     if(title) {
         HWND regularItems[]={subtitle,hostLabel,portLabel,userLabel,passLabel,targetLabel,
           searchLabel,hostBox,portBox,userBox,passBox,searchBox,modeBox,filterBox,listView,
-          refreshBtn,convertBtn,cleanupBtn,cancelBtn,deleteBtn};
+          refreshBtn,convertBtn,cleanupBtn,cancelBtn,deleteBtn,
+          favoritesSearch,favoritesList,favoritesName,favoritesPort,favoritesRemove,
+          favoritesEdit,favoritesPortLabel,favoritesNameLabel,favoritesInfo,favoritesHint};
         for(HWND item:regularItems) TextFont(item,regular);
-        HWND strongItems[]={counts,section,formTitle,newBtn,saveBtn,connectBtn};
+        HWND strongItems[]={counts,section,formTitle,newBtn,saveBtn,connectBtn,
+            favoritesTabBtn,credentialsTabBtn,toggleFavoriteBtn,favoritesHeading,
+            favoritesEditHeading,favoritesConnect,favoritesSave};
         for(HWND item:strongItems) TextFont(item,strong);
         HWND smallItems[]={preview,help,status};
         for(HWND item:smallItems) TextFont(item,small);
@@ -107,7 +139,6 @@ void Layout() {
     SetScrollInfo(frame,SB_VERT,&si,1);
     Pos(title,geometry.title);Pos(subtitle,geometry.subtitle);
     Pos(newBtn,geometry.newButton);Pos(refreshBtn,geometry.refreshButton);
-    Pos(counts,{geometry.summary.x+18,geometry.summary.y+12,geometry.summary.w-36,34});
     Pos(section,geometry.listHeading);
     Pos(searchLabel,geometry.searchLabel);Pos(searchBox,geometry.search);
     Pos(filterBox,geometry.filter);Pos(listView,geometry.list);
@@ -122,6 +153,36 @@ void Layout() {
     Pos(saveBtn,geometry.save);Pos(convertBtn,geometry.convert);
     Pos(cleanupBtn,geometry.cleanup);Pos(cancelBtn,geometry.cancel);
     Pos(status,geometry.status);
+    const auto summary=geometry.summary;
+    Pos(favoritesTabBtn,{summary.x+14,summary.y+10,134,38});
+    Pos(credentialsTabBtn,{summary.x+160,summary.y+10,146,38});
+    // The summary label occupies the remaining horizontal space.
+    const int summaryStart=summary.x+320;
+    Pos(counts,{summaryStart,summary.y+12,
+                summary.x+summary.w-summaryStart-12,34});
+    Pos(toggleFavoriteBtn,{geometry.editorHeading.x,geometry.editorHeading.y+40,
+                           geometry.editorHeading.w,31});
+    Pos(favoritesHeading,geometry.listHeading);
+    Pos(favoritesEditHeading,geometry.editorHeading);
+    Pos(favoritesSearch,{geometry.search.x,geometry.search.y,
+                         geometry.list.w-(geometry.search.x-geometry.list.x),35});
+    Pos(favoritesList,geometry.list);
+    Pos(favoritesConnect,geometry.connect);Pos(favoritesRemove,geometry.remove);
+    auto editor=geometry.editorHeading;
+    const int fx=editor.x, fw=editor.w, y=editor.y+77;
+    Pos(favoritesNameLabel,{fx,y,fw,22});
+    Pos(favoritesName,{fx,y+25,fw,36});
+    Pos(favoritesPortLabel,{fx,y+82,fw,22});
+    Pos(favoritesPort,{fx,y+108,fw,36});
+    Pos(favoritesInfo,{fx,y+166,fw,70});
+    Pos(favoritesHint,{fx,y+256,fw,90});
+    Pos(favoritesSave,geometry.save);Pos(favoritesEdit,geometry.convert);
+    int favWidth=geometry.list.w-10;
+    SendMessageW(favoritesList,LVM_SETCOLUMNWIDTH,0,(LPARAM)S(favWidth*39/100));
+    SendMessageW(favoritesList,LVM_SETCOLUMNWIDTH,1,(LPARAM)S(favWidth*28/100));
+    SendMessageW(favoritesList,LVM_SETCOLUMNWIDTH,2,(LPARAM)S(favWidth*13/100));
+    SendMessageW(favoritesList,LVM_SETCOLUMNWIDTH,3,(LPARAM)S(favWidth*20/100));
+    ShowCurrentTab();
     int colTotal=geometry.list.w-10;
     SendMessageW(listView,LVM_SETCOLUMNWIDTH,0,(LPARAM)S(colTotal*42/100));
     SendMessageW(listView,LVM_SETCOLUMNWIDTH,1,(LPARAM)S(colTotal*27/100));
@@ -151,6 +212,11 @@ void UpdateActions() {
     EnableWindow(userBox,!conversionPending);
     EnableWindow(passBox,!conversionPending);
     EnableWindow(modeBox,!conversionPending);
+    EnableWindow(toggleFavoriteBtn,selected>=0 && favoriteStoreWritable && !conversionPending);
+    if(selected>=0) {
+        bool included=favorites::Find(bookmarks.entries,favoriteCount,items[selected].target,items[selected].type)>=0;
+        SetText(toggleFavoriteBtn,included?L"★ 已收藏 · 取消收藏":L"☆ 收藏此凭据");
+    } else SetText(toggleFavoriteBtn,L"☆ 选中凭据后收藏");
     EnableWindow(cleanupBtn,conversionPending);
     EnableWindow(cancelBtn,conversionPending);
     SetText(saveBtn,conversionPending?L"等待连接确认":(domain?L"保存为通用凭据":
@@ -293,7 +359,8 @@ void Refresh(bool preserve=true) {
     if(total>MAX_ENTRIES) core::Append(t,160,L"       （仅显示前 2048 项）");
     SetText(counts,t);FilterRows();UpdateActions();
     if(selected>=0) Select(selected);
-    else Status(count?L"已从当前 Windows 用户的凭据管理器加载记录。":L"尚未发现 RDP 凭据。可在右侧创建。 ");
+    RefreshFavorites(true);ShowCurrentTab();
+    if(selected<0) Status(count?L"已从当前 Windows 用户的凭据管理器加载记录。":L"尚未发现 RDP 凭据。可在右侧创建。 ");
 }
 // Always display and select the newly written record, including after converting
 // a legacy record with the same target name and a different credential type.
@@ -485,6 +552,7 @@ void CancelConversion() {
     UpdateActions();
     Status(L"已结束转换确认流程，新通用凭据与旧域密码凭据均已保留。");
 }
+bool MigrateConvertedFavorite(const wchar_t* oldTarget,const wchar_t* newTarget);
 void Cleanup() {
     if(!conversionPending) return;
     int newPresent=CredentialPresence(pendingNew,CRED_TYPE_GENERIC);
@@ -513,6 +581,9 @@ void Cleanup() {
     core::Append(msg,1250,L"\r\n新凭据：");core::Append(msg,1250,pendingNew);
     core::Append(msg,1250,L"\r\n\r\n选择“是”将永久删除旧域密码凭据。是否已成功登录并确认删除？");
     if(MessageBoxW(frame,msg,L"确认登录成功并删除旧凭据",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) return;
+    if(!MigrateConvertedFavorite(pendingOld,pendingNew)) {
+        Alert(L"保存转换后的收藏夹关联信息失败。旧凭据暂时保留。 ");return;
+    }
     if(!CredDeleteW(pendingOld,CRED_TYPE_DOMAIN_PASSWORD,0)) {
         Failure(L"删除原域密码凭据失败，新通用凭据已保留。",GetLastError());return;
     }
@@ -539,6 +610,23 @@ void DeleteSelected() {
     }
     Refresh(false);ClearEditor();Status(L"已删除选定的 Windows 凭据。 ");
 }
+bool LaunchEndpoint(const wchar_t* host,unsigned port,bool forcePort=false) {
+    wchar_t endpoint[290]={},args[320]=L"/v:",systemPath[340]={};
+    if(!core::BuildEndpoint(host,port,endpoint,290) ||
+       (port==3389 && forcePort && !core::Append(endpoint,290,L":3389")) ||
+       !core::Append(args,320,endpoint)) {
+        Alert(L"无法生成有效的远程桌面连接目标。");return false;
+    }
+    DWORD n=GetSystemDirectoryW(systemPath,340);
+    if(!n || n+11>=340 || !core::Append(systemPath,340,L"\\mstsc.exe")) {
+        Alert(L"无法定位系统远程桌面客户端 mstsc.exe。");return false;
+    }
+    HINSTANCE result=ShellExecuteW(frame,L"open",systemPath,args,nullptr,SW_SHOWNORMAL);
+    if((ULONG_PTR)result<=32) {
+        Alert(L"启动 mstsc.exe 失败。请确认系统安装了远程桌面客户端。");return false;
+    }
+    return true;
+}
 void Connect() {
     wchar_t host[260]={},portText[16]={},user[520]={};unsigned port=3389;
     if(conversionPending) {
@@ -556,18 +644,286 @@ void Connect() {
             CredFree(c);
         }
     } else if(!Fields(host,portText,user,&port,false)) return;
-    wchar_t endpoint[290]={},args[320]=L"/v:",systemPath[340]={};
-    if(!core::BuildEndpoint(host,port,endpoint,290) || !core::Append(args,320,endpoint)) {
-        Alert(L"无法生成有效的远程桌面连接目标。");return;
-    }
-    DWORD n=GetSystemDirectoryW(systemPath,340);
-    if(!n || n+11>=340 || !core::Append(systemPath,340,L"\\mstsc.exe")) {
-        Alert(L"无法定位系统远程桌面客户端 mstsc.exe。");return;
-    }
-    HINSTANCE result=ShellExecuteW(frame,L"open",systemPath,args,nullptr,SW_SHOWNORMAL);
-    if((ULONG_PTR)result<=32) {Alert(L"启动 mstsc.exe 失败。请确认系统安装了远程桌面客户端。");return;}
+    if(!LaunchEndpoint(host,port)) return;
     Status(conversionPending?L"已打开待验证目标。确认远程桌面登录成功后，才能删除旧凭据。":
                               L"已启动 mstsc.exe。请确认远程登录是否成功。");
+}
+// Favorites metadata lives in HKCU; Windows Credential Manager remains the only password store.
+const wchar_t* FavoritesPath() {
+    return headlessSelfTest ? L"Software\\RDPCredManager\\SelfTest" : L"Software\\RDPCredManager";
+}
+HKEY FavoritesRoot() {return (HKEY)(LONG_PTR)(-2147483647);}
+void LoadFavorites() {
+    favoriteCount=0;selectedFavorite=-1;
+    bookmarks={};favoriteStoreWritable=true;
+    HKEY key=nullptr;
+    LONG result=RegOpenKeyExW(FavoritesRoot(),FavoritesPath(),0,KEY_QUERY_VALUE,&key);
+    if(result==ERROR_FILE_NOT_FOUND) return;
+    if(result!=0) {favoriteStoreWritable=false;Failure(L"无法打开收藏夹设置。",(DWORD)result);return;}
+    DWORD kind=0,bytes=sizeof(bookmarks);
+    result=RegQueryValueExW(key,L"Favorites",nullptr,&kind,(BYTE*)&bookmarks,&bytes);
+    RegCloseKey(key);
+    if(result==ERROR_FILE_NOT_FOUND) return;
+    if(result || kind!=REG_BINARY || bytes<12 ||
+       bookmarks.signature!=favorites::Signature ||
+       bookmarks.version!=favorites::FormatVersion ||
+       bookmarks.size>favorites::Limit ||
+       bytes!=12+bookmarks.size*sizeof(favorites::Entry)) {
+        favoriteStoreWritable=false;
+        Alert(L"收藏夹数据无法读取或格式不兼容。为避免覆盖原记录，已暂停收藏夹编辑。原始数据仍保留在注册表中。");
+        return;
+    }
+    favoriteCount=bookmarks.size;
+    for(unsigned i=0;i<favoriteCount;++i) {
+        // Require NUL terminators before any string operations.
+        if(bookmarks.entries[i].target[519] || bookmarks.entries[i].alias[95] ||
+           !favorites::Valid(bookmarks.entries[i])) {
+            favoriteStoreWritable=false;
+            favoriteCount=0;
+            Alert(L"收藏夹内容验证失败，已暂时禁用写入，原始数据仍保留。 ");
+            return;
+        }
+        for(unsigned j=0;j<i;++j) if(bookmarks.entries[j].credentialType==bookmarks.entries[i].credentialType &&
+            core::SameTarget(bookmarks.entries[j].target,bookmarks.entries[i].target)) {
+            favoriteStoreWritable=false;favoriteCount=0;
+            Alert(L"收藏夹包含重复条目，已暂停写入以保护原始数据。 ");return;
+        }
+    }
+}
+bool PersistFavorites() {
+    if(!favoriteStoreWritable) return false;
+    bookmarks.signature=favorites::Signature;
+    bookmarks.version=favorites::FormatVersion;
+    bookmarks.size=favoriteCount;
+    HKEY key=nullptr;
+    LONG result=RegCreateKeyExW(FavoritesRoot(),FavoritesPath(),0,nullptr,0,
+                                KEY_SET_VALUE,nullptr,&key,nullptr);
+    if(result!=0){Failure(L"无法创建收藏夹存储位置。",(DWORD)result);return false;}
+    result=RegSetValueExW(key,L"Favorites",0,REG_BINARY,(BYTE*)&bookmarks,
+                         12+favoriteCount*sizeof(favorites::Entry));
+    RegCloseKey(key);
+    if(result!=0){Failure(L"收藏夹保存失败。",(DWORD)result);return false;}
+    return true;
+}
+int FavoriteCredentialIndex(const favorites::Entry& e) {
+    return core::FindByTargetAndType(items,count,e.target,e.credentialType);
+}
+void SelectFavorite(int index) {
+    selectedFavorite=index;
+    uiUpdating=true;
+    if(index>=0 && (unsigned)index<favoriteCount) {
+        const favorites::Entry& e=bookmarks.entries[index];
+        SetText(favoritesName,e.alias);
+        wchar_t p[16];core::FormatUnsigned(e.port,p,16);SetText(favoritesPort,p);
+        int credential=FavoriteCredentialIndex(e);
+        wchar_t details[1300]=L"凭据：";
+        core::Append(details,1300,e.target);
+        core::Append(details,1300,e.credentialType==CRED_TYPE_GENERIC?L"\r\n类型：通用凭据":L"\r\n类型：域密码凭据");
+        if(credential>=0) {
+            core::Append(details,1300,L"\r\n登录用户：");core::Append(details,1300,items[credential].user);
+            core::Append(details,1300,L"\r\n状态：可启动（远程登录结果由服务器决定）");
+        } else core::Append(details,1300,L"\r\n状态：凭据已缺失，请在凭据管理页重新创建");
+        SetText(favoritesInfo,details);
+    } else {
+        SetText(favoritesName,L"");SetText(favoritesPort,L"");
+        SetText(favoritesInfo,favoriteCount?L"选择一条收藏会话查看详情。":
+                    L"收藏夹暂无会话。请前往“凭据管理”，选中凭据后点击收藏按钮。");
+    }
+    uiUpdating=false;
+    UpdateFavoriteActions();
+}
+void UpdateFavoriteActions() {
+    bool has=selectedFavorite>=0 && (unsigned)selectedFavorite<favoriteCount;
+    EnableWindow(favoritesSave,has && favoriteStoreWritable);
+    EnableWindow(favoritesRemove,has && favoriteStoreWritable);
+    EnableWindow(favoritesEdit,has && FavoriteCredentialIndex(bookmarks.entries[selectedFavorite])>=0);
+    EnableWindow(favoritesConnect,has && FavoriteCredentialIndex(bookmarks.entries[selectedFavorite])>=0);
+    EnableWindow(favoritesName,has && favoriteStoreWritable);
+    EnableWindow(favoritesPort,has && favoriteStoreWritable);
+}
+void RefreshFavorites(bool preserveSelection) {
+    wchar_t oldTarget[520]={};unsigned oldType=0;
+    if(preserveSelection && selectedFavorite>=0 && (unsigned)selectedFavorite<favoriteCount) {
+        core::Copy(oldTarget,520,bookmarks.entries[selectedFavorite].target);
+        oldType=bookmarks.entries[selectedFavorite].credentialType;
+    }
+    selectedFavorite=-1;
+    if(oldTarget[0]) selectedFavorite=favorites::Find(bookmarks.entries,favoriteCount,oldTarget,oldType);
+    wchar_t term[260]={};GetWindowTextW(favoritesSearch,term,260);core::Trim(term);
+    uiUpdating=true;
+    SendMessageW(favoritesList,LVM_DELETEALLITEMS,0,0);
+    favoriteShown=0;
+    for(unsigned i=0;i<favoriteCount;++i) {
+        const auto& fav=bookmarks.entries[i];
+        int credential=FavoriteCredentialIndex(fav);
+        const wchar_t* username=credential>=0?items[credential].user:L"（凭据缺失）";
+        if(!core::ContainsInsensitive(favorites::Name(fav),term) &&
+           !core::ContainsInsensitive(fav.target,term) &&
+           !core::ContainsInsensitive(username,term)) continue;
+        favoriteVisible[favoriteShown]=i;
+        LVITEMW row{};row.mask=LVIF_TEXT|LVIF_PARAM;
+        row.iItem=(int)favoriteShown;row.lParam=i;row.pszText=(wchar_t*)favorites::Name(fav);
+        int inserted=(int)SendMessageW(favoritesList,LVM_INSERTITEMW,0,(LPARAM)&row);
+        if(inserted<0) continue;
+        LVITEMW cell{};cell.iItem=inserted;cell.iSubItem=1;
+        cell.pszText=(wchar_t*)username;
+        SendMessageW(favoritesList,LVM_SETITEMTEXTW,(WPARAM)inserted,(LPARAM)&cell);
+        wchar_t port[16];core::FormatUnsigned(fav.port,port,16);
+        cell.iSubItem=2;cell.pszText=port;
+        SendMessageW(favoritesList,LVM_SETITEMTEXTW,(WPARAM)inserted,(LPARAM)&cell);
+        cell.iSubItem=3;cell.pszText=(wchar_t*)(credential>=0?L"可连接":L"凭据缺失");
+        SendMessageW(favoritesList,LVM_SETITEMTEXTW,(WPARAM)inserted,(LPARAM)&cell);
+        if(selectedFavorite==(int)i) {
+            LVITEMW state{};state.stateMask=LVIS_SELECTED|LVIS_FOCUSED;
+            state.state=LVIS_SELECTED|LVIS_FOCUSED;
+            SendMessageW(favoritesList,LVM_SETITEMSTATE,(WPARAM)favoriteShown,(LPARAM)&state);
+        }
+        ++favoriteShown;
+    }
+    if(selectedFavorite>=0) {
+        bool visible=false;for(unsigned i=0;i<favoriteShown;++i)
+            if(favoriteVisible[i]==(unsigned)selectedFavorite) visible=true;
+        if(!visible) selectedFavorite=-1;
+    }
+    if(selectedFavorite<0 && favoriteShown>0 && !term[0]) {
+        selectedFavorite=(int)favoriteVisible[0];
+        LVITEMW state{};state.stateMask=LVIS_SELECTED|LVIS_FOCUSED;
+        state.state=LVIS_SELECTED|LVIS_FOCUSED;
+        SendMessageW(favoritesList,LVM_SETITEMSTATE,0,(LPARAM)&state);
+    }
+    uiUpdating=false;
+    SelectFavorite(selectedFavorite);
+}
+int FavoriteSelectionFromList() {
+    LONG_PTR row=SendMessageW(favoritesList,LVM_GETNEXTITEM,(WPARAM)-1,LVNI_SELECTED);
+    if(row<0 || (unsigned)row>=favoriteShown) return -1;
+    return (int)favoriteVisible[row];
+}
+void ChangeTab(bool favorite) {
+    favoritesTab=favorite;
+    scrollY=0;
+    ShowCurrentTab();
+    Layout();
+    SetText(status,favoritesTab?L"收藏夹：双击会话即可启动远程桌面。":
+                              L"凭据管理：可以编辑、转换和收藏已保存的凭据。");
+}
+void ShowCurrentTab() {
+    if(!frame || !title) return;
+    HWND credentialControls[]={section,formTitle,hostLabel,portLabel,userLabel,passLabel,
+        targetLabel,preview,help,hostBox,portBox,userBox,passBox,modeBox,
+        searchBox,filterBox,listView,newBtn,refreshBtn,saveBtn,convertBtn,cleanupBtn,
+        cancelBtn,connectBtn,deleteBtn,toggleFavoriteBtn};
+    HWND favoriteControls[]={favoritesHeading,favoritesEditHeading,favoritesNameLabel,
+        favoritesPortLabel,favoritesInfo,favoritesHint,favoritesName,favoritesPort,
+        favoritesSearch,favoritesList,favoritesConnect,favoritesRemove,favoritesSave,favoritesEdit};
+    for(HWND h:credentialControls) if(h) ShowWindow(h,favoritesTab?SW_HIDE:SW_SHOW);
+    for(HWND h:favoriteControls) if(h) ShowWindow(h,favoritesTab?SW_SHOW:SW_HIDE);
+    SetText(favoritesTabBtn,favoritesTab?L"★ 收藏夹 · 当前":L"☆ 收藏夹");
+    SetText(credentialsTabBtn,favoritesTab?L"凭据管理":L"凭据管理 · 当前");
+    wchar_t summary[160]=L"收藏会话  ";wchar_t total[16];core::FormatUnsigned(favoriteCount,total,16);
+    core::Append(summary,160,total);
+    if(!favoritesTab) {
+        core::Append(summary,160,L"    凭据  ");core::FormatUnsigned(count,total,16);
+        core::Append(summary,160,total);
+    }
+    SetText(counts,summary);
+}
+void ToggleFavorite() {
+    if(!favoriteStoreWritable || selected<0 || (unsigned)selected>=count || conversionPending) return;
+    Entry& credential=items[selected];
+    int index=favorites::Find(bookmarks.entries,favoriteCount,credential.target,credential.type);
+    undoBookmarks=bookmarks;unsigned before=favoriteCount;
+    if(index>=0) {
+        favorites::Remove(bookmarks.entries,&favoriteCount,(unsigned)index);
+    } else {
+        wchar_t host[300]={};unsigned directPort=0,port=3389;
+        if(!core::ParseTargetEndpoint(credential.target,host,300,&directPort)) {
+            Alert(L"此凭据目标名称无效，无法收藏。 ");return;
+        }
+        if(directPort) port=directPort;
+        else core::PortFromComment(credential.comment,&port);
+        if(!favorites::Add(bookmarks.entries,&favoriteCount,credential.target,credential.type,port)) {
+            Alert(L"收藏数量达到上限（128）或记录重复。 ");return;
+        }
+    }
+    if(!PersistFavorites()) {bookmarks=undoBookmarks;favoriteCount=before;return;}
+    if(index>=0) selectedFavorite=-1;
+    else selectedFavorite=favorites::Find(bookmarks.entries,favoriteCount,credential.target,credential.type);
+    RefreshFavorites(index<0);UpdateActions();ShowCurrentTab();
+    Status(index>=0?L"已取消收藏，Windows 凭据保持不变。":L"已加入收藏夹。切换到收藏夹即可一键连接。");
+}
+bool MigrateConvertedFavorite(const wchar_t* oldTarget,const wchar_t* newTarget) {
+    int oldIndex=favorites::Find(bookmarks.entries,favoriteCount,oldTarget,CRED_TYPE_DOMAIN_PASSWORD);
+    if(oldIndex<0) return true;
+    if(!favoriteStoreWritable) return false;
+    undoBookmarks=bookmarks;
+    unsigned previousCount=favoriteCount;
+    int newIndex=favorites::Find(bookmarks.entries,favoriteCount,newTarget,CRED_TYPE_GENERIC);
+    if(newIndex>=0) {
+        // The generic credential already has its own bookmark; retain it.
+        favorites::Remove(bookmarks.entries,&favoriteCount,(unsigned)oldIndex);
+    } else {
+        auto& item=bookmarks.entries[oldIndex];
+        if(!core::Copy(item.target,520,newTarget)) return false;
+        item.credentialType=CRED_TYPE_GENERIC;
+    }
+    if(!PersistFavorites()) {
+        bookmarks=undoBookmarks;favoriteCount=previousCount;return false;
+    }
+    selectedFavorite=-1;RefreshFavorites(false);
+    return true;
+}
+void SaveFavoriteDetails() {
+    if(!favoriteStoreWritable || selectedFavorite<0 || (unsigned)selectedFavorite>=favoriteCount) return;
+    wchar_t alias[96]={},portText[16]={};unsigned port=0;
+    GetWindowTextW(favoritesName,alias,96);GetWindowTextW(favoritesPort,portText,16);
+    core::Trim(alias);core::Trim(portText);
+    if(!core::ParsePort(portText,&port) || !portText[0]) {
+        Alert(L"收藏会话的端口必须是 1 至 65535 之间的整数。 ");return;
+    }
+    wchar_t targetHost[300]={};unsigned credentialPort=0;
+    if(!core::ParseTargetEndpoint(bookmarks.entries[selectedFavorite].target,targetHost,300,&credentialPort) ||
+       (credentialPort!=0 && credentialPort!=port)) {
+        Alert(L"此凭据目标名称已经包含固定端口。请在凭据管理中创建与新端口匹配的凭据，再将其添加到收藏夹。");
+        return;
+    }
+    favorites::Entry backup=bookmarks.entries[selectedFavorite];
+    if(!favorites::Update(bookmarks.entries,favoriteCount,(unsigned)selectedFavorite,alias,port)) {
+        Alert(L"会话名称或端口无效。 ");return;
+    }
+    if(!PersistFavorites()) {bookmarks.entries[selectedFavorite]=backup;return;}
+    RefreshFavorites(true);
+    Status(L"已保存收藏会话的显示名称和连接端口。凭据密码未发生变化。");
+}
+void RemoveFavorite() {
+    if(!favoriteStoreWritable || selectedFavorite<0 || (unsigned)selectedFavorite>=favoriteCount) return;
+    if(MessageBoxW(frame,L"确定取消收藏此会话吗？\r\n\r\nWindows 凭据仍会保留。",
+                   L"取消收藏",MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2)!=IDYES) return;
+    undoBookmarks=bookmarks;unsigned before=favoriteCount;
+    favorites::Remove(bookmarks.entries,&favoriteCount,(unsigned)selectedFavorite);
+    if(!PersistFavorites()) {bookmarks=undoBookmarks;favoriteCount=before;return;}
+    selectedFavorite=-1;RefreshFavorites(false);ShowCurrentTab();
+    Status(L"已取消收藏，关联的 Windows 凭据没有删除。");
+}
+void ConnectFavorite() {
+    if(selectedFavorite<0 || (unsigned)selectedFavorite>=favoriteCount) return;
+    const favorites::Entry& fav=bookmarks.entries[selectedFavorite];
+    if(FavoriteCredentialIndex(fav)<0) {
+        Alert(L"无法启动：该收藏项对应的 Windows 凭据已经不存在。请先在凭据管理页重新创建凭据。 ");return;
+    }
+    wchar_t host[300]={};unsigned explicitPort=0;
+    if(!core::ParseTargetEndpoint(fav.target,host,300,&explicitPort)) {
+        Alert(L"收藏会话中的服务器地址无效。 ");return;
+    }
+    if(LaunchEndpoint(host,fav.port,explicitPort!=0)) Status(L"已启动收藏的 RDP 会话。");
+}
+void EditFavoriteCredential() {
+    if(selectedFavorite<0 || (unsigned)selectedFavorite>=favoriteCount) return;
+    auto fav=bookmarks.entries[selectedFavorite];
+    int index=FavoriteCredentialIndex(fav);
+    if(index<0) {Alert(L"原凭据已经不存在，请重新创建。 ");return;}
+    ChangeTab(false);
+    ShowCredential(fav.target,fav.credentialType);
 }
 void Columns() {
     const wchar_t* names[]={L"目标名称",L"用户名",L"凭据类型",L"端口"};
@@ -616,6 +972,40 @@ void Init() {
     cancelBtn=Control(L"BUTTON",L"取消转换并保留凭据",WS_TABSTOP|BS_OWNERDRAW,0,ID_CANCEL,regular);
     connectBtn=Control(L"BUTTON",L"连接 / 测试 RDP",WS_TABSTOP|BS_OWNERDRAW,0,ID_CONNECT,strong);
     deleteBtn=Control(L"BUTTON",L"删除选中凭据",WS_TABSTOP|BS_OWNERDRAW,0,ID_DELETE,regular);
+    favoritesTabBtn=Control(L"BUTTON",L"☆ 收藏夹",BS_OWNERDRAW|WS_TABSTOP,0,ID_TAB_FAVORITES,strong);
+    credentialsTabBtn=Control(L"BUTTON",L"凭据管理",BS_OWNERDRAW|WS_TABSTOP,0,ID_TAB_CREDENTIALS,strong);
+    toggleFavoriteBtn=Control(L"BUTTON",L"☆ 收藏此凭据",BS_OWNERDRAW|WS_TABSTOP,0,ID_TOGGLE_FAVORITE,strong);
+    favoritesHeading=Control(L"STATIC",L"★ 我的远程桌面会话",0,0,ID_FAVORITES_HEADING,strong);
+    favoritesEditHeading=Control(L"STATIC",L"会话详情 · 自定义",0,0,ID_FAVORITES_EDITHEADING,strong);
+    favoritesNameLabel=Control(L"STATIC",L"会话显示名称（可留空）",0,0,ID_FAVORITES_NAMELABEL,regular);
+    favoritesPortLabel=Control(L"STATIC",L"连接端口",0,0,ID_FAVORITES_PORTLABEL,regular);
+    favoritesInfo=Control(L"STATIC",L"",0,0,ID_FAVORITES_INFO,regular);
+    favoritesHint=Control(L"STATIC",L"双击收藏的会话即可启动。此处可自定义名称和连接端口。收藏夹只保存会话信息，登录密码仍由 Windows 管理。",0,0,ID_FAVORITES_HINT,small);
+    favoritesSearch=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,WS_EX_CLIENTEDGE,ID_FAVORITES_SEARCH,regular);
+    favoritesName=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,WS_EX_CLIENTEDGE,ID_FAVORITES_NAME,regular);
+    favoritesPort=Control(L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL,WS_EX_CLIENTEDGE,ID_FAVORITES_PORT,regular);
+    favoritesList=Control(L"SysListView32",L"",LVS_REPORT|LVS_SINGLESEL|LVS_SHOWSELALWAYS|WS_TABSTOP|WS_BORDER,
+                        WS_EX_CLIENTEDGE,ID_FAVORITES_LIST,regular);
+    favoritesConnect=Control(L"BUTTON",L"连接收藏会话",BS_OWNERDRAW|WS_TABSTOP,0,ID_FAVORITES_CONNECT,strong);
+    favoritesRemove=Control(L"BUTTON",L"取消收藏",BS_OWNERDRAW|WS_TABSTOP,0,ID_FAVORITES_REMOVE,regular);
+    favoritesSave=Control(L"BUTTON",L"保存会话设置",BS_OWNERDRAW|WS_TABSTOP,0,ID_FAVORITES_SAVE,strong);
+    favoritesEdit=Control(L"BUTTON",L"管理关联凭据",BS_OWNERDRAW|WS_TABSTOP,0,ID_FAVORITES_EDIT,regular);
+    SendMessageW(favoritesSearch,EM_LIMITTEXT,250,0);
+    SendMessageW(favoritesName,EM_LIMITTEXT,95,0);
+    SendMessageW(favoritesPort,EM_LIMITTEXT,5,0);
+    const wchar_t* favCols[]={L"会话",L"登录用户",L"端口",L"状态"};
+    for(int i=0;i<4;++i) {
+        LVCOLUMNW col{};col.mask=LVCF_TEXT|LVCF_WIDTH|LVCF_SUBITEM;
+        col.pszText=(LPWSTR)favCols[i];col.cx=S(i==0?210:i==1?150:90);col.iSubItem=i;
+        SendMessageW(favoritesList,LVM_INSERTCOLUMNW,(WPARAM)i,(LPARAM)&col);
+    }
+    SendMessageW(favoritesList,LVM_SETEXTENDEDLISTVIEWSTYLE,
+                 LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER,
+                 LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
+    SetWindowTheme(favoritesList,L"Explorer",nullptr);
+    SendMessageW(favoritesList,LVM_SETBKCOLOR,0,UI_WHITE);
+    SendMessageW(favoritesList,LVM_SETTEXTBKCOLOR,0,UI_WHITE);
+    SendMessageW(favoritesList,LVM_SETTEXTCOLOR,0,UI_TITLE);
     SendMessageW(hostBox,EM_LIMITTEXT,253,0);
     SendMessageW(portBox,EM_LIMITTEXT,5,0);
     SendMessageW(userBox,EM_LIMITTEXT,513,0);
@@ -631,12 +1021,15 @@ void Init() {
     DWORD capacity=260;
     if(!GetUserNameW(currentUser,&capacity)) currentUser[0]=0;
     SetText(userBox,currentUser);
+    LoadFavorites();
+    favoritesTab=favoriteCount>0;
     Columns();
     SetWindowTheme(listView,L"Explorer",nullptr);
     SendMessageW(listView,LVM_SETBKCOLOR,0,UI_WHITE);
     SendMessageW(listView,LVM_SETTEXTBKCOLOR,0,UI_WHITE);
     SendMessageW(listView,LVM_SETTEXTCOLOR,0,UI_TITLE);
     Layout();PreviewTarget();UpdateActions();Refresh(false);
+    RefreshFavorites(false);ShowCurrentTab();
 }
 void Card(HANDLE dc,layout::Rectangle r,COLORREF fill,COLORREF outline,int radius=16) {
     const int x=S(r.x), y=S(r.y-scrollY),w=S(r.w),h=S(r.h);
@@ -658,16 +1051,19 @@ void PaintButton(DRAWITEMSTRUCT* draw) {
     const bool disabled=(draw->itemState&ODS_DISABLED)!=0;
     const bool down=(draw->itemState&ODS_SELECTED)!=0;
     COLORREF fill=UI_WHITE,textColor=UI_TITLE,border=UI_BORDER;
-    if(id==ID_SAVE || id==ID_CONNECT || id==ID_NEW) {
+    if(id==ID_SAVE || id==ID_CONNECT || id==ID_NEW || id==ID_FAVORITES_CONNECT || id==ID_FAVORITES_SAVE || id==ID_TAB_FAVORITES || id==ID_TAB_CREDENTIALS) {
         fill=down?0x00726109:UI_ACCENT;
         textColor=UI_WHITE;
         border=fill;
     } else if(id==ID_CONVERT) {
         fill=UI_SOFT;border=0x00D5C2AD;textColor=UI_NAVY;
-    } else if(id==ID_DELETE) {
+    } else if(id==ID_DELETE || id==ID_FAVORITES_REMOVE) {
         textColor=UI_RED;
     } else if(id==ID_CLEANUP) {
         fill=UI_NAVY;border=UI_NAVY;textColor=UI_WHITE;
+    }
+    if((id==ID_TAB_FAVORITES && !favoritesTab) || (id==ID_TAB_CREDENTIALS && favoritesTab)) {
+        fill=UI_WHITE;textColor=UI_TITLE;border=UI_BORDER;
     }
     if(disabled) {fill=0x00F1F0ED;textColor=0x00AAA7A3;border=0x00E5E3E0;}
     else if(down && id!=ID_SAVE && id!=ID_CONNECT && id!=ID_NEW) fill=UI_SOFT;
@@ -687,7 +1083,7 @@ void PaintButton(DRAWITEMSTRUCT* draw) {
     DeleteObject(brush);DeleteObject(pen);
     wchar_t name[160]={};GetWindowTextW(draw->hwndItem,name,160);
     SetBkMode(dc,TRANSPARENT);SetTextColor(dc,textColor);
-    HFONT font=(id==ID_NEW||id==ID_SAVE||id==ID_CONNECT)?strong:regular;
+    HFONT font=(id==ID_NEW||id==ID_SAVE||id==ID_CONNECT||id==ID_FAVORITES_CONNECT||id==ID_FAVORITES_SAVE||id==ID_TAB_FAVORITES||id==ID_TAB_CREDENTIALS)?strong:regular;
     HGDIOBJ previous=SelectObject(dc,font);
     RECT textRect=r;
     textRect.left+=S(7);textRect.right-=S(7);
@@ -747,6 +1143,12 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wParam,LPARAM lParam
         }
         case WM_NOTIFY: {
             NMHDR* nm=(NMHDR*)lParam;
+            if(nm && nm->idFrom==ID_FAVORITES_LIST && !uiUpdating) {
+                if(nm->code==LVN_ITEMCHANGED) {
+                    int index=FavoriteSelectionFromList();
+                    if(index!=selectedFavorite) SelectFavorite(index);
+                } else if(nm->code==NM_DBLCLK && selectedFavorite>=0) ConnectFavorite();
+            }
             if(nm && nm->idFrom==ID_LIST && !uiUpdating) {
                 if(nm->code==LVN_ITEMCHANGED) {
                     int index=SelectedFromList();
@@ -761,7 +1163,15 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wParam,LPARAM lParam
         }
         case WM_COMMAND: {
             int id=(int)(wParam&0xffff),event=(int)((wParam>>16)&0xffff);
-            if(id==ID_NEW) ClearEditor();
+            if(id==ID_TAB_FAVORITES) ChangeTab(true);
+            else if(id==ID_TAB_CREDENTIALS) ChangeTab(false);
+            else if(id==ID_TOGGLE_FAVORITE) ToggleFavorite();
+            else if(id==ID_FAVORITES_CONNECT) ConnectFavorite();
+            else if(id==ID_FAVORITES_REMOVE) RemoveFavorite();
+            else if(id==ID_FAVORITES_SAVE) SaveFavoriteDetails();
+            else if(id==ID_FAVORITES_EDIT) EditFavoriteCredential();
+            else if(id==ID_FAVORITES_SEARCH && event==EN_CHANGE && !uiUpdating) RefreshFavorites(true);
+            else if(id==ID_NEW) ClearEditor();
             else if(id==ID_REFRESH) Refresh();
             else if(id==ID_SAVE) Save(false);
             else if(id==ID_CONVERT) Save(true);
@@ -782,7 +1192,7 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wParam,LPARAM lParam
             if(id==ID_TITLE || id==ID_SUBTITLE) {
                 SetTextColor(dc,UI_WHITE);return (LRESULT)navyBrush;
             }
-            SetTextColor(dc,id==ID_PREVIEW||id==ID_HELP||id==ID_STATUS?UI_MUTED:UI_TITLE);
+            SetTextColor(dc,id==ID_PREVIEW||id==ID_HELP||id==ID_STATUS||id==ID_FAVORITES_HINT?UI_MUTED:UI_TITLE);
             if(id==ID_COUNT) return (LRESULT)softBrush;
             if(id==ID_STATUS) return (LRESULT)bgBrush;
             return (LRESULT)whiteBrush;
@@ -857,9 +1267,50 @@ int NativeGuiSelfTest() {
             }
         }
     }
+    SetText(passBox,L"");
+    // Isolated registry key is used by self-test; real user favorites are untouched.
+    if(result==0) {
+        int credential=core::FindByTargetAndType(items,count,bare,CRED_TYPE_GENERIC);
+        if(credential<0) result=40;
+        else {
+            selected=credential;
+            ToggleFavorite();
+            if(favoriteCount!=1 || !favoriteStoreWritable) result=41;
+            else {
+                selectedFavorite=0;
+                SetText(favoritesName,L"集成测试会话");SetText(favoritesPort,L"3721");
+                SaveFavoriteDetails();
+                if(favoriteCount!=1 || bookmarks.entries[0].port!=3721 ||
+                   !core::EqualInsensitive(bookmarks.entries[0].alias,L"集成测试会话")) result=42;
+                else {
+                    LoadFavorites();
+                    if(favoriteCount!=1 || bookmarks.entries[0].port!=3721) result=43;
+                    else {
+                        favoritesTab=(favoriteCount>0);
+                        if(!favoritesTab) result=46;
+                        CredDeleteW(full,CRED_TYPE_GENERIC,0);
+                        CredDeleteW(bare,CRED_TYPE_GENERIC,0);
+                        Refresh(false);
+                        if(FavoriteCredentialIndex(bookmarks.entries[0])>=0) result=48;
+                        favorites::Remove(bookmarks.entries,&favoriteCount,0);
+                        if(!PersistFavorites()) result=44;
+                        else {
+                            LoadFavorites();
+                            if(favoriteCount!=0) result=45;
+                            else {favoritesTab=favoriteCount>0;if(favoritesTab) result=47;}
+                        }
+                    }
+                }
+            }
+        }
+    }
     CredDeleteW(full,CRED_TYPE_GENERIC,0);
     CredDeleteW(bare,CRED_TYPE_GENERIC,0);
-    SetText(passBox,L"");
+    HKEY testKey=nullptr;
+    if(RegOpenKeyExW(FavoritesRoot(),FavoritesPath(),0,KEY_QUERY_VALUE,&testKey)==0) {
+        RegCloseKey(testKey);
+        RegDeleteKeyW(FavoritesRoot(),FavoritesPath());
+    }
     return result;
 }
 bool RequestedSelfTest() {
@@ -871,6 +1322,7 @@ bool RequestedSelfTest() {
 }
 int Run() {
     application=GetModuleHandleW(nullptr);
+    headlessSelfTest=RequestedSelfTest();
     SetProcessDpiAwarenessContext((HANDLE)(LONG_PTR)-4);
     INITCOMMONCONTROLSEX icc{sizeof(INITCOMMONCONTROLSEX),ICC_LISTVIEW_CLASSES};
     if(!InitCommonControlsEx(&icc)) return 1;
@@ -891,7 +1343,7 @@ int Run() {
     int winW=(int)(1160*screenDpi/96),winH=(int)(920*screenDpi/96);
     if(winW>workW-24) winW=workW-24;
     if(winH>workH-24) winH=workH-24;
-    HWND window=CreateWindowExW(0,wc.lpszClassName,L"RDP Credential Manager 4.1",
+    HWND window=CreateWindowExW(0,wc.lpszClassName,L"RDP Credential Manager 4.2",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_VSCROLL,
         work.left+(workW-winW)/2,work.top+(workH-winH)/2,winW,winH,
         nullptr,nullptr,application,nullptr);

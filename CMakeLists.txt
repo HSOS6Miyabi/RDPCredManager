@@ -16,7 +16,12 @@ add_executable(RDPCredManager WIN32 src/main.cpp)
 target_compile_features(RDPCredManager PRIVATE cxx_std_17)
 if(MSVC)
     target_compile_options(RDPCredManager PRIVATE /utf-8 /Oi- /Gs1048576 /GS- /GR-)
-    target_link_options(RDPCredManager PRIVATE /ENTRY:WinMainCRTStartup /NODEFAULTLIB
+    if(RDPCM_ARCH STREQUAL "x86")
+        set(RDPCM_ENTRY WinMainCRTStartup)
+    else()
+        set(RDPCM_ENTRY WinMainCRTStartup)
+    endif()
+    target_link_options(RDPCredManager PRIVATE /ENTRY:${RDPCM_ENTRY} /NODEFAULTLIB
         /MANIFEST:EMBED /MANIFESTUAC:NO
         /MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/app.manifest)
 endif()
@@ -34,3 +39,6 @@ add_test(NAME core COMMAND core_test)
 add_test(NAME layout COMMAND layout_test)
 add_test(NAME credential_manager_roundtrip COMMAND win_credential_test)
 add_test(NAME win_gui_save_edit COMMAND win_gui_test)
+
+add_executable(favorites_test tests/favorites_test.cpp)
+add_test(NAME favorites_model COMMAND favorites_test)
