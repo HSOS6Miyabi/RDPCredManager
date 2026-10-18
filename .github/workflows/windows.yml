@@ -1,32 +1,46 @@
-name: Windows build, integration tests and release
+name: Windows multi-architecture build and release
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+
 permissions:
-  contents: write
+  contents: read
+
 jobs:
-  windows-x64:
+  build:
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86, vsarch: amd64_x86, filename: RDPCredManager-Win32.exe }
+          - { arch: x64, vsarch: amd64, filename: RDPCredManager-Win64.exe }
+          - { arch: arm64, vsarch: amd64_arm64, filename: RDPCredManager-ARM64.exe }
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: amd64
-      - name: Build x64 Win32 application and verify PE manifest
+          arch: ${{ matrix.vsarch }}
+      - name: Compile executable
         shell: cmd
-        run: call build_windows.cmd
-      - name: Build native Windows tests
+        run: call build_windows.cmd ${{ matrix.arch }}
+      - name: Compile test executables
         shell: cmd
         run: |
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\core_test.exe tests\core_test.cpp
+          if errorlevel 1 exit /b 1
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\layout_test.exe tests\layout_test.cpp
+          if errorlevel 1 exit /b 1
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\win_credential_test.exe tests\win_credential_test.cpp advapi32.lib
+          if errorlevel 1 exit /b 1
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\win_gui_test.exe tests\win_gui_test.cpp advapi32.lib user32.lib
-      - name: Run logic, HiDPI layout, and Windows credential integration tests
+          if errorlevel 1 exit /b 1
+      - name: Native x86/x64 tests
+        if: matrix.arch != 'arm64'
         shell: cmd
         run: |
           build\core_test.exe
@@ -35,38 +49,92 @@ jobs:
           if errorlevel 1 exit /b 1
           build\win_credential_test.exe
           if errorlevel 1 exit /b 1
-          build\manifest_verify.exe RDPCredManager.exe
+          build\manifest_verify.exe RDPCredManager.exe ${{ matrix.arch }}
           if errorlevel 1 exit /b 1
-      - name: Windows GUI startup, save, edit and selection integration test
-        shell: cmd
-        run: build\win_gui_test.exe
-      - name: Package release files and SHA-256
+          build\win_gui_test.exe
+          if errorlevel 1 exit /b 1
+      - name: Stage binaries
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item RDPCredManager.exe dist/RDPCredManager-Win64.exe
-          git archive --format=zip --output=dist/RDPCredManager-source.zip HEAD
-          $exeHash = (Get-FileHash dist/RDPCredManager-Win64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          $srcHash = (Get-FileHash dist/RDPCredManager-source.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$exeHash  RDPCredManager-Win64.exe`n$srcHash  RDPCredManager-source.zip" |
-            Set-Content -Encoding ascii dist/SHA256SUMS.txt
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item RDPCredManager.exe "staging/${{ matrix.filename }}"
+          foreach ($name in @('manifest_verify','core_test','layout_test','win_credential_test','win_gui_test')) {
+            Copy-Item "build/$name.exe" "staging/$name.exe"
+          }
       - uses: actions/upload-artifact@v4
         with:
-          name: RDPCredManager-Windows-x64
+          name: build-${{ matrix.arch }}
+          path: staging/*
+          if-no-files-found: error
+
+  arm64-native:
+    needs: build
+    runs-on: windows-11-arm
+    timeout-minutes: 25
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-arm64
+          path: arm64
+      - name: Native Windows ARM64 tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location arm64
+          try {
+            $commands=@(
+              @('manifest_verify.exe','RDPCredManager-ARM64.exe','arm64'),
+              @('core_test.exe'),@('layout_test.exe'),@('win_credential_test.exe')
+            )
+            foreach($cmd in $commands) {
+              $name=$cmd[0]
+              $argsList=if($cmd.Count -gt 1){$cmd[1..($cmd.Count-1)]}else{@()}
+              & "./$name" @argsList
+              if($LASTEXITCODE -ne 0){throw "$name failed: $LASTEXITCODE"}
+            }
+            Copy-Item RDPCredManager-ARM64.exe RDPCredManager.exe
+            & ./win_gui_test.exe
+            if($LASTEXITCODE -ne 0){throw "ARM64 GUI test failed: $LASTEXITCODE"}
+          } finally { Pop-Location }
+
+  release:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [build, arm64-native]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-*
+          path: artifacts
+      - name: Package release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp artifacts/build-x86/RDPCredManager-Win32.exe dist/
+          cp artifacts/build-x64/RDPCredManager-Win64.exe dist/
+          cp artifacts/build-arm64/RDPCredManager-ARM64.exe dist/
+          git archive --format=zip --output=dist/RDPCredManager-source.zip HEAD
+          (cd dist && sha256sum RDPCredManager-Win32.exe RDPCredManager-Win64.exe RDPCredManager-ARM64.exe RDPCredManager-source.zip > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RDPCredManager-release-assets
           path: dist/*
           if-no-files-found: error
-      - name: Publish validated version to GitHub Releases
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-        shell: pwsh
+      - name: Publish new release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = if ($env:GITHUB_REF.StartsWith('refs/tags/')) { $env:GITHUB_REF.Substring(10) } else { 'v4.0.0' }
-          gh release view $tag --json tagName *> $null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists; assets left unchanged."
-          } else {
-            gh release create $tag dist/RDPCredManager-Win64.exe dist/RDPCredManager-source.zip dist/SHA256SUMS.txt `
-              --target $env:GITHUB_SHA --title "RDP Credential Manager $tag" `
-              --notes "Windows x64 native C++ release. Includes credential conversion selection and port editor fixes. Tested with MSVC, PE manifest validation, Windows Credential Manager API integration, GUI startup smoke test, and HiDPI layout checks."
-          }
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then tag="${GITHUB_REF#refs/tags/}"; else tag=v4.1.0; fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag exists; preserving published files."
+          else
+            gh release create "$tag" dist/* --target "$GITHUB_SHA" \
+              --title "RDP Credential Manager $tag" \
+              --notes "Windows x86 (32-bit), x64 and ARM64 native executables. Each build passes manifest checks and native Windows integration tests before publication."
+          fi
