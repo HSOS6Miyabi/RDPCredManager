@@ -69,6 +69,7 @@ API("user32",int,MessageBoxW,(HWND,LPCWSTR,LPCWSTR,UINT));
 API("user32",HCURSOR,LoadCursorW,(HINSTANCE,LPCWSTR));
 API("user32",HWND,SetFocus,(HWND));
 API("user32",BOOL,EnableWindow,(HWND,BOOL));
+API("user32",BOOL,IsWindowEnabled,(HWND));
 API("gdi32",HGDIOBJ,GetStockObject,(int));
 API("advapi32",BOOL,GetUserNameW,(LPWSTR,DWORD*));
 API("advapi32",BOOL,CredEnumerateW,(LPCWSTR,DWORD,DWORD*,CREDENTIALW***));
@@ -79,6 +80,8 @@ API("kernel32",HINSTANCE,GetModuleHandleW,(LPCWSTR));
 API("kernel32",void,ExitProcess,(UINT));
 API("kernel32",DWORD,GetLastError,(void));
 API("kernel32",DWORD,GetSystemDirectoryW,(LPWSTR,UINT));
+API("kernel32",LPWSTR,GetCommandLineW,(void));
+API("kernel32",DWORD,GetCurrentProcessId,(void));
 API("kernel32",DWORD,FormatMessageW,(DWORD,LPCVOID,DWORD,DWORD,LPWSTR,DWORD,void*));
 API("shell32",HINSTANCE,ShellExecuteW,(HWND,LPCWSTR,LPCWSTR,LPCWSTR,LPCWSTR,int));
 

@@ -10,8 +10,8 @@ make_import() {
   { printf 'LIBRARY "%s.dll"\nEXPORTS\n' "$library"; printf ' %s\n' "$@"; } >"build/${library}.def"
   "$LD" /nologo /machine:x64 /dll /noentry "/def:build/${library}.def" "/implib:build/${library}.lib" "/out:build/${library}.dll"
 }
-make_import kernel32 ExitProcess GetLastError GetModuleHandleW GetSystemDirectoryW FormatMessageW
-make_import user32 RegisterClassExW CreateWindowExW DefWindowProcW ShowWindow UpdateWindow GetMessageW TranslateMessage IsDialogMessageW DispatchMessageW PostQuitMessage SendMessageW MoveWindow GetClientRect SetWindowTextW GetWindowTextW GetWindowTextLengthW MessageBoxW LoadCursorW SetFocus EnableWindow SetProcessDpiAwarenessContext GetDpiForWindow SetWindowPos GetDlgCtrlID InvalidateRect BeginPaint EndPaint FillRect SetScrollInfo GetScrollInfo GetWindowRect GetSystemMetrics SystemParametersInfoW GetDpiForSystem DrawTextW DrawFocusRect DestroyIcon
+make_import kernel32 ExitProcess GetLastError GetModuleHandleW GetSystemDirectoryW GetCommandLineW GetCurrentProcessId FormatMessageW
+make_import user32 RegisterClassExW CreateWindowExW DefWindowProcW ShowWindow UpdateWindow GetMessageW TranslateMessage IsDialogMessageW DispatchMessageW PostQuitMessage SendMessageW MoveWindow GetClientRect SetWindowTextW GetWindowTextW GetWindowTextLengthW MessageBoxW LoadCursorW SetFocus EnableWindow IsWindowEnabled SetProcessDpiAwarenessContext GetDpiForWindow SetWindowPos GetDlgCtrlID InvalidateRect BeginPaint EndPaint FillRect SetScrollInfo GetScrollInfo GetWindowRect GetSystemMetrics SystemParametersInfoW GetDpiForSystem DrawTextW DrawFocusRect DestroyIcon
 make_import gdi32 GetStockObject CreateFontW CreateSolidBrush DeleteObject SetTextColor SetBkMode CreatePen SelectObject RoundRect
 make_import advapi32 GetUserNameW CredEnumerateW CredWriteW CredDeleteW CredReadW CredFree
 make_import shell32 ShellExecuteW ExtractIconExW

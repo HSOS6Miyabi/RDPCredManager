@@ -14,3 +14,7 @@
 10. 对列表使用搜索及类型筛选，检查选中记录超出筛选结果后不会出现误删除。
 
 这些操作包含访问真实 Windows 凭据存储和实际 RDP 身份验证，需要在目标 Windows 系统上执行。
+
+## GitHub Actions GUI 自动化集成测试
+
+Windows Runner 执行 `tests/win_gui_test.cpp`，该测试启动 `RDPCredManager.exe --self-test`，由 GUI 进程自身设置输入框并进行保存。测试会核对端口编辑、保存后的通用凭据选中状态、复制已有密码到新目标，以及两条临时凭据的清理。仅创建使用 `.invalid` 主机名的临时测试记录，不连接外部服务器。

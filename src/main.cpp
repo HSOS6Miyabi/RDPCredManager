@@ -44,14 +44,16 @@ HICON applicationIcon=nullptr,smallIcon=nullptr;
 int dpi=96,scrollY=0;
 layout::Geometry geometry{};
 bool uiUpdating=false;
+bool headlessSelfTest=false;
 
 int S(int v) {return (v*dpi+48)/96;}
 void Wipe(wchar_t* data,unsigned size) {volatile wchar_t* p=data;while(size--) *p++=0;}
 void SetText(HWND h,const wchar_t* text) {if(h) SetWindowTextW(h,text);}
-void Notice(const wchar_t* text) {MessageBoxW(frame,text,L"RDP 凭据管理器",MB_ICONINFORMATION|MB_OK);}
-void Alert(const wchar_t* text) {MessageBoxW(frame,text,L"RDP 凭据管理器",MB_ICONWARNING|MB_OK);}
+void Notice(const wchar_t* text) {if(headlessSelfTest) return; MessageBoxW(frame,text,L"RDP 凭据管理器",MB_ICONINFORMATION|MB_OK);}
+void Alert(const wchar_t* text) {if(headlessSelfTest) return; MessageBoxW(frame,text,L"RDP 凭据管理器",MB_ICONWARNING|MB_OK);}
 void Status(const wchar_t* text) {SetText(status,text);}
 void Failure(const wchar_t* titleText,DWORD code) {
+    if(headlessSelfTest) return;
     wchar_t buffer[880]={},num[20]={},details[440]={};
     core::Copy(buffer,880,titleText);
     core::Append(buffer,880,L"\r\n\r\nWindows 错误代码：");
@@ -810,6 +812,63 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wParam,LPARAM lParam
     }
     return DefWindowProcW(window,message,wParam,lParam);
 }
+// This isolated Windows CI integration mode runs inside the GUI process, so
+// it can exercise native input controls without remote-process UI privileges.
+// It uses uniquely named disposable credentials and never starts an RDP session.
+int NativeGuiSelfTest() {
+    headlessSelfTest=true;
+    if(!IsWindowEnabled(saveBtn) || !IsWindowEnabled(portBox)) return 30;
+    wchar_t host[260]{},portText[16]{};
+    GetWindowTextW(hostBox,host,260);GetWindowTextW(portBox,portText,16);
+    if(host[0] || portText[0]) return 31;
+    wchar_t pid[20]{};core::FormatUnsigned(GetCurrentProcessId(),pid,20);
+    wchar_t server[100]=L"rdpcm-gui-ci-";
+    core::Append(server,100,pid);core::Append(server,100,L".invalid");
+    wchar_t full[520]{},bare[520]{};
+    core::BuildTargetWithPort(server,3721,true,full,520);
+    core::BuildTargetWithPort(server,3389,false,bare,520);
+    SetText(hostBox,server);SetText(portBox,L"3721");
+    SetText(userBox,L"CI\\DisposableUser");
+    SetText(passBox,L"disposable-ci-test-password");
+    SendMessageW(modeBox,CB_SETCURSEL,1,0);
+    Save(false);
+    int result=32;
+    CREDENTIALW* record=nullptr;
+    if(CredReadW(full,CRED_TYPE_GENERIC,0,&record)) {
+        bool correct=record->UserName &&
+            core::EqualInsensitive(record->UserName,L"CI\\DisposableUser");
+        CredFree(record);
+        if(correct && selected>=0 && items[selected].type==CRED_TYPE_GENERIC &&
+            core::SameTarget(items[selected].target,full)) {
+            wchar_t editedPort[16]{};GetWindowTextW(portBox,editedPort,16);
+            if(core::EqualInsensitive(editedPort,L"3721")) {
+                SetText(portBox,L"3389");
+                SendMessageW(modeBox,CB_SETCURSEL,0,0);
+                Save(false);
+                if(CredReadW(bare,CRED_TYPE_GENERIC,0,&record)) {
+                    CredFree(record);
+                    if(selected>=0 && items[selected].type==CRED_TYPE_GENERIC &&
+                       core::SameTarget(items[selected].target,bare) &&
+                       CredReadW(full,CRED_TYPE_GENERIC,0,&record)) {
+                        CredFree(record);
+                        result=0;
+                    } else result=34;
+                } else result=33;
+            }
+        }
+    }
+    CredDeleteW(full,CRED_TYPE_GENERIC,0);
+    CredDeleteW(bare,CRED_TYPE_GENERIC,0);
+    SetText(passBox,L"");
+    return result;
+}
+bool RequestedSelfTest() {
+    const wchar_t* line=GetCommandLineW();
+    if(!line) return false;
+    unsigned length=core::Length(line);
+    return length>=12 && line[length-12]==L' ' &&
+           core::EqualInsensitive(line+length-11,L"--self-test");
+}
 int Run() {
     application=GetModuleHandleW(nullptr);
     SetProcessDpiAwarenessContext((HANDLE)(LONG_PTR)-4);
@@ -837,6 +896,7 @@ int Run() {
         work.left+(workW-winW)/2,work.top+(workH-winH)/2,winW,winH,
         nullptr,nullptr,application,nullptr);
     if(!window) return 3;
+    if(RequestedSelfTest()) return NativeGuiSelfTest();
     ShowWindow(window,SW_SHOW);UpdateWindow(window);
     MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0) {
         if(!IsDialogMessageW(window,&msg)) {TranslateMessage(&msg);DispatchMessageW(&msg);}
