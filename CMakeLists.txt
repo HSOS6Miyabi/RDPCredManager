@@ -6,7 +6,7 @@ endif()
 add_executable(RDPCredManager WIN32 src/main.cpp)
 target_compile_features(RDPCredManager PRIVATE cxx_std_17)
 if(MSVC)
-    target_compile_options(RDPCredManager PRIVATE /utf-8 /Oi- /GS- /GR-)
+    target_compile_options(RDPCredManager PRIVATE /utf-8 /Oi- /Gs1048576 /GS- /GR-)
     target_link_options(RDPCredManager PRIVATE /ENTRY:WinMainCRTStartup /NODEFAULTLIB
         /MANIFEST:EMBED /MANIFESTUAC:NO
         /MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/app.manifest)

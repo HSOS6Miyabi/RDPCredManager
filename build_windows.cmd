@@ -6,7 +6,7 @@ if errorlevel 1 (
   exit /b 1
 )
 if not exist build mkdir build
-cl /nologo /std:c++17 /O2 /Oi- /GS- /GR- /EHsc /utf-8 /c /Fo:build\main.obj src\main.cpp
+cl /nologo /std:c++17 /O2 /Oi- /Gs1048576 /GS- /GR- /EHsc /utf-8 /c /Fo:build\main.obj src\main.cpp
 if errorlevel 1 exit /b 1
 link /nologo /machine:x64 /subsystem:windows /entry:WinMainCRTStartup /nodefaultlib /manifest:embed /manifestuac:no /manifestinput:app.manifest /out:RDPCredManager.exe build\main.obj kernel32.lib user32.lib gdi32.lib advapi32.lib shell32.lib comctl32.lib uxtheme.lib
 if errorlevel 1 exit /b 1
