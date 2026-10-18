@@ -2,11 +2,11 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdio>
-int wmain() {
+int Check(const wchar_t* phase) {
     wchar_t exe[MAX_PATH]{};
     if(!GetFullPathNameW(L"RDPCredManager.exe",MAX_PATH,exe,nullptr)) return 1;
     wchar_t command[MAX_PATH+32]{};
-    if(swprintf_s(command,L"\"%ls\" --self-test",exe)<0) return 2;
+    if(swprintf_s(command,L"\"%ls\" %ls",exe,phase)<0) return 2;
     STARTUPINFOW si{};si.cb=sizeof(si);
     PROCESS_INFORMATION pi{};
     if(!CreateProcessW(exe,command,nullptr,nullptr,FALSE,0,nullptr,nullptr,&si,&pi)) {
@@ -18,8 +18,16 @@ int wmain() {
     else GetExitCodeProcess(pi.hProcess,&code);
     CloseHandle(pi.hThread);CloseHandle(pi.hProcess);
     if(wait!=WAIT_OBJECT_0 || code!=0) {
-        std::printf("Native GUI integration failed: wait=%lu code=%lu\n",wait,code);return 4;
+        std::printf("Native GUI integration failed (%ls): wait=%lu code=%lu\n",phase,wait,code);return 4;
     }
-    std::puts("Native GUI save, port editing, selection and cleanup: passed");
+    std::printf("Native GUI phase passed: %ls\n",phase);
+    return 0;
+}
+int wmain() {
+    int early=Check(L"--self-test-init");
+    if(early) return early;
+    int complete=Check(L"--self-test");
+    if(complete) return complete;
+    std::puts("Native GUI save, port editing, favorites persistence and cleanup: passed");
     return 0;
 }

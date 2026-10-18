@@ -1,11 +1,11 @@
-# RDP Credential Manager 4.1
+# RDP Credential Manager 4.2
 
-原生 Windows RDP 凭据管理器（Windows x86 / x64 / ARM64 / C++17 / Win32 API）。
+原生 Windows RDP 凭据管理器及收藏会话启动器（Windows x86 / x64 / ARM64 / C++17 / Win32 API）。
 
 ## 使用与运行环境
 
 - 运行 `RDPCredManager.exe`。无需安装，不需要 Python、JavaScript、.NET 或第三方运行库。
-- 适用于 Windows 10（1703 及以上版本）及 Windows 11；分别提供 x86、x64、ARM64 可执行文件，使用系统提供的 `mstsc.exe`、Windows Credential Manager 和 Windows 主题组件。
+- 适用于 Windows 10（1703 及以上版本）及 Windows 11；x86、x64 和 ARM64 提供独立的原生可执行文件，使用系统提供的 `mstsc.exe`、Windows Credential Manager 和 Windows 主题组件。
 - 程序以当前 Windows 用户身份运行，只管理当前用户的 `TERMSRV/` 凭据。无需管理员权限。
 - 新建凭据时仅自动填写当前 Windows 用户名。服务器、端口及密码字段默认留空。
 - 密码不写入配置文件、日志或源代码。用户输入的密码通过 `CredWriteW` 存入 Windows 凭据管理器；密码输入框内容在提交后清除。
@@ -18,6 +18,17 @@
 - 可调整窗口大小；显示器缩放使可用高度不足时，通过窗口垂直滚动条访问完整操作区域。
 - 列表具有搜索、凭据类型筛选、整行选中和滚动功能。窗口大小变化时调整列宽。
 - 自动采用当前 Windows 系统中远程桌面客户端的图标（如果存在）。
+
+## 收藏夹与远程桌面会话启动器
+
+- 程序具有 **★ 收藏夹** 与 **凭据管理** 两个页面。用户存在收藏项时，启动默认进入收藏夹；收藏夹为空时进入凭据管理页。两个页面可随时切换。
+- 在凭据管理页选中一条 RDP 凭据，点击 **☆ 收藏此凭据** 即可收藏；再次点击可以取消收藏。通用凭据和域密码凭据按类型分别识别，避免目标名称相同时混淆。
+- 收藏夹采用可搜索的会话表格，显示会话名称、登录用户名、端口和凭据状态。双击会话或点击 **连接收藏会话** 启动系统 `mstsc.exe`。
+- 会话详情支持自定义显示名称和端口，并可跳转至关联凭据进行编辑。凭据目标名称已经包含固定端口时，收藏夹会拒绝不匹配的端口设置，避免错误的登录凭据匹配。
+- 收藏数据保存在当前用户注册表 `HKEY_CURRENT_USER\Software\RDPCredManager` 的 `Favorites` 二进制值中，仅保存凭据引用、别名和端口。**密码始终保留在 Windows Credential Manager 中**。收藏夹不导出、不复制密码。
+- 收藏的凭据被删除后，收藏项仍然保留，明确显示 **凭据缺失** 并禁止使用该收藏项发起登录。取消收藏不会删除 Windows 凭据。
+- 当域密码凭据完成转换并清理旧记录时，已有收藏自动转向新的通用凭据。转换过程中原凭据会一直保留，直到用户明确确认登录成功。
+- 收藏夹最多支持 128 条会话；读取到损坏或不兼容的收藏格式时，将暂停写入并保留原始数据。
 
 ## 管理功能
 
@@ -57,7 +68,7 @@
 
 ## 构建
 
-在与目标架构对应的 Visual Studio 开发者命令提示符中运行（以下示例构建 x64）：
+从 Visual Studio 2022 x64 Native Tools Command Prompt 运行：
 
 ```bat
 build_windows.cmd
@@ -71,7 +82,7 @@ build_windows.cmd
 bash build_cross.sh
 ```
 
-该脚本通过项目包含的 Win32 ABI 声明分别构建 Windows x86、x64 和 ARM64 可执行文件，最终程序使用 Windows 系统 DLL。
+该脚本通过项目包含的精简 Windows ABI 声明构建 Windows x64 可执行文件，最终程序使用 Windows 系统 DLL。
 
 ## 测试
 
@@ -86,7 +97,7 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined tests/
 
 布局测试覆盖多种窗口宽高与 100%、125%、150%、200%、250%、300% DPI 换算，检查控件尺寸、面板范围和滚动位置。
 
-构建脚本还会编译并运行 `tests/manifest_verify.cpp`，检查对应架构的 PE32 或 PE32+ 结构和 RT_MANIFEST 资源，核验 UAC 执行级别、Common Controls v6 和 Per-Monitor V2 属性。Visual Studio / CMake 工程可通过 CTest 运行相同检查。
+构建脚本还会编译并运行 `tests/manifest_verify.cpp`，检查最终 Windows EXE 的 PE x64 结构和 RT_MANIFEST 资源，核验 UAC 执行级别、Common Controls v6 和 Per-Monitor V2 属性。Visual Studio / CMake 工程可通过 CTest 运行相同检查。
 
 交叉编译环境已检查编译结果和系统 DLL 导入。Windows GUI 实际操作、跨显示器移动及远程桌面连接仍需 Windows 实机测试。
 
@@ -95,8 +106,10 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined tests/
 - `src/main.cpp`：Win32 GUI、Credential Manager API 和连接流程。
 - `src/layout.h`：响应式布局与滚动范围计算。
 - `src/core.h`：主机、端口和凭据目标名称的解析与验证。
+- `src/favorites.h`：收藏会话的架构无关模型与操作。
 - `src/win32_min.h`：用于无 Windows SDK 交叉编译的 ABI 声明。
 - `tests/core_test.cpp`：核心逻辑测试。
+- `tests/favorites_test.cpp`：收藏夹增删、别名、端口和凭据类型识别测试。
 - `tests/layout_test.cpp`：布局与 DPI 换算测试。
 - `tests/manifest_verify.cpp`：对生成的 Windows EXE 进行嵌入式清单验证。
 - `app.manifest`：Common Controls 6、Per-Monitor V2 DPI 及普通用户权限设置。
@@ -106,17 +119,22 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined tests/
 
 ## GitHub Actions
 
-`.github/workflows/windows.yml` 使用 MSVC 构建 x86、x64 和 ARM64 程序，在 Windows Server 2022 和原生 Windows ARM64 Runner 中分别测试。测试包含核心逻辑、HiDPI 布局、Windows Credential Manager 临时凭据的读写和删除、PE Manifest，以及 GUI 中的保存、端口编辑和选中状态。
+`.github/workflows/windows.yml` 在 Windows Server 2022 GitHub Hosted Runner 中使用 MSVC x64 编译，执行原生逻辑测试、HiDPI 布局测试、真实 Windows Credential Manager 临时凭据的读写枚举与删除测试、PE Manifest 检查，以及在 GUI 进程内部执行的凭据保存、端口编辑、列表选中状态和临时凭据清理测试。
 
 主分支首次推送后，若不存在 `v4.0.0` Release，则由完成测试的工作流创建对应版本并上传 EXE、源代码压缩包和 SHA-256 文件。今后可推送 `v*` 版本标签触发新版本的测试与 Release 发布。
 
 GUI 集成测试通过 `RDPCredManager.exe --self-test` 在程序自身进程内运行，采用独立临时主机名，测试结束后删除测试凭据。远端 RDP 实际登录依然需要具备可访问远程主机的环境。
 
-## 多架构构建与发布
+## 多架构构建与发行
 
-- Windows x86（32 位）：在 Visual Studio amd64_x86 命令提示符中执行 `build_windows.cmd x86`。
-- Windows x64：在 Visual Studio x64 命令提示符中执行 `build_windows.cmd x64`。
-- Windows ARM64：在 Visual Studio amd64_arm64 命令提示符中执行 `build_windows.cmd arm64`。
-- LLVM 交叉编译使用 `bash build_cross.sh x86`、`x64` 或 `arm64`，构建后检查 EXE 的 PE 机器类型及内嵌 Manifest。
-- GitHub Actions 为每种架构单独编译；x86 与 x64 在 Windows Server 2022 上测试，ARM64 在原生 Windows ARM64 Runner 上测试。所有必要测试通过后，自动发布包含三个 EXE、源代码和 SHA-256 校验文件的 Release。
-- 发布文件：`RDPCredManager-Win32.exe`、`RDPCredManager-Win64.exe`、`RDPCredManager-ARM64.exe`。
+- `build_windows.cmd x86`：使用 x86 或 `amd64_x86` Visual Studio 开发者命令提示符。
+- `build_windows.cmd x64`：使用 x64 Visual Studio 开发者命令提示符。
+- `build_windows.cmd arm64`：使用 `amd64_arm64` 交叉编译命令提示符；可在 ARM64 Windows 设备上执行生成的程序。
+- `build_cross.sh x86|x64|arm64`：使用 LLVM Clang/LLD 交叉编译，并检查机器类型、UAC 与 HiDPI Manifest。
+- Release 分别发布 `RDPCredManager-Win32.exe`、`RDPCredManager-Win64.exe`、`RDPCredManager-ARM64.exe`、源代码包和 SHA-256 校验文件。
+
+GitHub Actions 对 x86 与 x64 在 Windows x64 执行凭据读写与 GUI 集成测试；ARM64 在 Windows ARM64 Runner 上运行相同的测试。所有架构测试通过后才自动发布版本。
+
+### 收藏夹集成测试
+
+Windows CI 在三个架构上运行 `--self-test`，使用隔离的 `Software\RDPCredManager\SelfTest` 注册表子键执行收藏、修改名称与端口、重新读取和删除测试，并检查凭据删除后收藏项保留。该子键在测试结束后删除，不修改正常使用的收藏夹。

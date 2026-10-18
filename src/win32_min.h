@@ -139,6 +139,7 @@ constexpr UINT MB_ICONWARNING=0x0030;
 constexpr UINT MB_ICONINFORMATION=0x0040;
 constexpr UINT MB_DEFBUTTON2=0x0100;
 constexpr int IDYES=6;
+constexpr int SW_HIDE=0;
 constexpr int SW_SHOWNORMAL=1;
 constexpr int SW_SHOW=5;
 constexpr int COLOR_WINDOW=5;
@@ -164,6 +165,17 @@ static_assert(sizeof(NMHDR)==24 && sizeof(LVITEMW)==88 && sizeof(LVCOLUMNW)==56,
 #endif
 API("comctl32",BOOL,InitCommonControlsEx,(const INITCOMMONCONTROLSEX*));
 API("advapi32",BOOL,CredReadW,(LPCWSTR,DWORD,DWORD,CREDENTIALW**));
+typedef HANDLE HKEY;
+typedef DWORD REGSAM;
+API("advapi32",LONG,RegOpenKeyExW,(HKEY,LPCWSTR,DWORD,REGSAM,HKEY*));
+API("advapi32",LONG,RegCreateKeyExW,(HKEY,LPCWSTR,DWORD,LPWSTR,DWORD,REGSAM,LPVOID,HKEY*,DWORD*));
+API("advapi32",LONG,RegQueryValueExW,(HKEY,LPCWSTR,DWORD*,DWORD*,BYTE*,DWORD*));
+API("advapi32",LONG,RegSetValueExW,(HKEY,LPCWSTR,DWORD,DWORD,const BYTE*,DWORD));
+API("advapi32",LONG,RegCloseKey,(HKEY));
+API("advapi32",LONG,RegDeleteKeyW,(HKEY,LPCWSTR));
+constexpr DWORD KEY_QUERY_VALUE=0x0001,KEY_SET_VALUE=0x0002,REG_BINARY=3;
+constexpr LONG ERROR_FILE_NOT_FOUND=2;
+
 API("user32",BOOL,SetProcessDpiAwarenessContext,(HANDLE));
 API("user32",UINT,GetDpiForWindow,(HWND));
 API("user32",BOOL,SetWindowPos,(HWND,HWND,int,int,int,int,UINT));

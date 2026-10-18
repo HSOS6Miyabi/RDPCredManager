@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity version="4.1.0.0" processorArchitecture="*" name="RDPCredManager.Application" type="win32" />
-  <description>RDP Credential Manager 4.1</description>
+  <assemblyIdentity version="4.2.0.0" processorArchitecture="*" name="RDPCredManager.Application" type="win32" />
+  <description>RDP Credential Manager 4.2</description>
   <dependency>
     <dependentAssembly>
       <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />

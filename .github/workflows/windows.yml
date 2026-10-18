@@ -11,35 +11,44 @@ permissions:
 
 jobs:
   build:
+    name: Build and test ${{ matrix.arch }}
     runs-on: windows-2022
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86, vsarch: amd64_x86, filename: RDPCredManager-Win32.exe }
-          - { arch: x64, vsarch: amd64, filename: RDPCredManager-Win64.exe }
-          - { arch: arm64, vsarch: amd64_arm64, filename: RDPCredManager-ARM64.exe }
+          - arch: x86
+            vsarch: amd64_x86
+            filename: RDPCredManager-Win32.exe
+          - arch: x64
+            vsarch: amd64
+            filename: RDPCredManager-Win64.exe
+          - arch: arm64
+            vsarch: amd64_arm64
+            filename: RDPCredManager-ARM64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.vsarch }}
-      - name: Compile executable
+      - name: Build native application
         shell: cmd
         run: call build_windows.cmd ${{ matrix.arch }}
-      - name: Compile test executables
+      - name: Build architecture-matched tests
         shell: cmd
         run: |
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\core_test.exe tests\core_test.cpp
           if errorlevel 1 exit /b 1
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\layout_test.exe tests\layout_test.cpp
           if errorlevel 1 exit /b 1
+          cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\favorites_test.exe tests\favorites_test.cpp
+          if errorlevel 1 exit /b 1
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\win_credential_test.exe tests\win_credential_test.cpp advapi32.lib
           if errorlevel 1 exit /b 1
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\win_gui_test.exe tests\win_gui_test.cpp advapi32.lib user32.lib
           if errorlevel 1 exit /b 1
-      - name: Native x86/x64 tests
+      - name: Run native x86 and x64 integration tests
         if: matrix.arch != 'arm64'
         shell: cmd
         run: |
@@ -47,19 +56,21 @@ jobs:
           if errorlevel 1 exit /b 1
           build\layout_test.exe
           if errorlevel 1 exit /b 1
+          build\favorites_test.exe
+          if errorlevel 1 exit /b 1
           build\win_credential_test.exe
           if errorlevel 1 exit /b 1
           build\manifest_verify.exe RDPCredManager.exe ${{ matrix.arch }}
           if errorlevel 1 exit /b 1
           build\win_gui_test.exe
           if errorlevel 1 exit /b 1
-      - name: Stage binaries
+      - name: Prepare testable artifact
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path staging | Out-Null
           Copy-Item RDPCredManager.exe "staging/${{ matrix.filename }}"
-          foreach ($name in @('manifest_verify','core_test','layout_test','win_credential_test','win_gui_test')) {
-            Copy-Item "build/$name.exe" "staging/$name.exe"
+          foreach ($file in @('manifest_verify.exe','core_test.exe','layout_test.exe','favorites_test.exe','win_credential_test.exe','win_gui_test.exe')) {
+            Copy-Item "build/$file" "staging/$file"
           }
       - uses: actions/upload-artifact@v4
         with:
@@ -68,6 +79,7 @@ jobs:
           if-no-files-found: error
 
   arm64-native:
+    name: ARM64 native tests
     needs: build
     runs-on: windows-11-arm
     timeout-minutes: 25
@@ -76,28 +88,33 @@ jobs:
         with:
           name: build-arm64
           path: arm64
-      - name: Native Windows ARM64 tests
+      - name: Execute Windows ARM64 binaries and verify manifest
         shell: pwsh
         run: |
-          $ErrorActionPreference='Stop'
+          $ErrorActionPreference = 'Stop'
+          $env:PATH = "$PWD/arm64;$env:PATH"
+          $commands = @(
+            @('manifest_verify.exe','RDPCredManager-ARM64.exe','arm64'),
+            @('core_test.exe'),
+            @('layout_test.exe'),
+            @('favorites_test.exe'),
+            @('win_credential_test.exe')
+          )
           Push-Location arm64
           try {
-            $commands=@(
-              @('manifest_verify.exe','RDPCredManager-ARM64.exe','arm64'),
-              @('core_test.exe'),@('layout_test.exe'),@('win_credential_test.exe')
-            )
-            foreach($cmd in $commands) {
+            foreach ($cmd in $commands) {
               $name=$cmd[0]
-              $argsList=if($cmd.Count -gt 1){$cmd[1..($cmd.Count-1)]}else{@()}
+              $argsList = if ($cmd.Count -gt 1) { $cmd[1..($cmd.Count-1)] } else { @() }
               & "./$name" @argsList
-              if($LASTEXITCODE -ne 0){throw "$name failed: $LASTEXITCODE"}
+              if ($LASTEXITCODE -ne 0) { throw "$name failed: $LASTEXITCODE" }
             }
             Copy-Item RDPCredManager-ARM64.exe RDPCredManager.exe
             & ./win_gui_test.exe
-            if($LASTEXITCODE -ne 0){throw "ARM64 GUI test failed: $LASTEXITCODE"}
+            if ($LASTEXITCODE -ne 0) { throw "ARM64 GUI integration failed: $LASTEXITCODE" }
           } finally { Pop-Location }
 
   release:
+    name: Publish verified three-architecture release
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [build, arm64-native]
     runs-on: ubuntu-latest
@@ -109,7 +126,7 @@ jobs:
         with:
           pattern: build-*
           path: artifacts
-      - name: Package release
+      - name: Assemble release and checksums
         shell: bash
         run: |
           set -euo pipefail
@@ -124,17 +141,21 @@ jobs:
           name: RDPCredManager-release-assets
           path: dist/*
           if-no-files-found: error
-      - name: Publish new release
+      - name: Publish GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then tag="${GITHUB_REF#refs/tags/}"; else tag=v4.1.0; fi
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          else
+            tag=v4.2.0
+          fi
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag exists; preserving published files."
+            echo "Release $tag already exists. No assets overwritten."
           else
             gh release create "$tag" dist/* --target "$GITHUB_SHA" \
               --title "RDP Credential Manager $tag" \
-              --notes "Windows x86 (32-bit), x64 and ARM64 native executables. Each build passes manifest checks and native Windows integration tests before publication."
+              --notes "Native Windows x86 (32-bit), x64 and ARM64 builds. Windows Credential Manager API tests, GUI integration tests, favorites registry persistence and embedded manifest verification run on native-capable Windows runners before release."
           fi
