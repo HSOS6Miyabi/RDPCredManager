@@ -2,7 +2,7 @@
 #include "core.h"
 #include "layout.h"
 
-// RDP Credential Manager — native Windows x64 GUI, no third-party runtime.
+// RDP Credential Manager — native Windows x86/x64/ARM64 GUI, no third-party runtime.
 namespace {
 constexpr unsigned MAX_ENTRIES=2048;
 constexpr int ID_TITLE=10,ID_SUBTITLE=11,ID_COUNT=12,ID_SECTION=13,ID_FORMTITLE=14;
@@ -891,7 +891,7 @@ int Run() {
     int winW=(int)(1160*screenDpi/96),winH=(int)(920*screenDpi/96);
     if(winW>workW-24) winW=workW-24;
     if(winH>workH-24) winH=workH-24;
-    HWND window=CreateWindowExW(0,wc.lpszClassName,L"RDP Credential Manager 4.0",
+    HWND window=CreateWindowExW(0,wc.lpszClassName,L"RDP Credential Manager 4.1",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_VSCROLL,
         work.left+(workW-winW)/2,work.top+(workH-winH)/2,winW,winH,
         nullptr,nullptr,application,nullptr);
@@ -904,15 +904,15 @@ int Run() {
     return (int)msg.wParam;
 }
 } // namespace
-extern "C" void WINAPI WinMainCRTStartup() {ExitProcess((UINT)Run());}
-extern "C" void* __cdecl memcpy(void* dst,const void* src,unsigned long long size) {
+extern "C" void __cdecl WinMainCRTStartup() {ExitProcess((UINT)Run());}
+extern "C" void* __cdecl memcpy(void* dst,const void* src,decltype(sizeof(0)) size) {
     volatile BYTE* d=(volatile BYTE*)dst;
     const volatile BYTE* s=(const volatile BYTE*)src;
-    for(unsigned long long i=0;i<size;++i) d[i]=s[i];
+    for(decltype(sizeof(0)) i=0;i<size;++i) d[i]=s[i];
     return dst;
 }
-extern "C" void* __cdecl memset(void* dst,int value,unsigned long long size) {
+extern "C" void* __cdecl memset(void* dst,int value,decltype(sizeof(0)) size) {
     volatile BYTE* d=(volatile BYTE*)dst;
-    for(unsigned long long i=0;i<size;++i) d[i]=(BYTE)value;
+    for(decltype(sizeof(0)) i=0;i<size;++i) d[i]=(BYTE)value;
     return dst;
 }

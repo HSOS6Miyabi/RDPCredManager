@@ -1,10 +1,10 @@
 #pragma once
 // The Win32 declarations required by this application. Kept self-contained so
 // the project also cross-compiles with Clang/LLD without an installed Windows SDK.
-// Definitions mirror the Windows SDK ABI for 64-bit Windows.
+// Definitions mirror the Windows SDK ABI for x86, x64 and ARM64 Windows.
 
-#ifndef _WIN64
-#error This application targets 64-bit Windows only.
+#if !defined(_M_IX86) && !defined(_M_X64) && !defined(_M_ARM64)
+#error Unsupported Windows target architecture.
 #endif
 
 typedef unsigned char BYTE;
@@ -13,8 +13,13 @@ typedef unsigned int UINT;
 typedef unsigned long DWORD;
 typedef long LONG;
 typedef int BOOL;
+#if defined(_M_IX86)
+typedef unsigned int ULONG_PTR;
+typedef int LONG_PTR;
+#else
 typedef unsigned long long ULONG_PTR;
 typedef long long LONG_PTR;
+#endif
 typedef LONG_PTR LPARAM;
 typedef ULONG_PTR WPARAM;
 typedef LONG_PTR LRESULT;
@@ -44,10 +49,18 @@ struct MINMAXINFO { POINT ptReserved; POINT ptMaxSize; POINT ptMaxPosition; POIN
 typedef LRESULT (CALLBACK *WNDPROC)(HWND,UINT,WPARAM,LPARAM);
 struct WNDCLASSEXW { UINT cbSize; UINT style; WNDPROC lpfnWndProc; int cbClsExtra; int cbWndExtra; HINSTANCE hInstance; HICON hIcon; HCURSOR hCursor; HBRUSH hbrBackground; LPCWSTR lpszMenuName; LPCWSTR lpszClassName; HICON hIconSm; };
 struct CREDENTIALW { DWORD Flags; DWORD Type; LPWSTR TargetName; LPWSTR Comment; struct {DWORD dwLowDateTime; DWORD dwHighDateTime;} LastWritten; DWORD CredentialBlobSize; LPBYTE CredentialBlob; DWORD Persist; DWORD AttributeCount; void* Attributes; LPWSTR TargetAlias; LPWSTR UserName; };
-static_assert(sizeof(wchar_t)==2 && sizeof(void*)==8, "Windows x64 UTF-16 required");
-static_assert(sizeof(CREDENTIALW)==80, "CREDENTIALW ABI mismatch");
-static_assert(sizeof(WNDCLASSEXW)==80, "WNDCLASSEXW ABI mismatch");
-static_assert(sizeof(MSG)==48, "MSG ABI mismatch");
+static_assert(sizeof(wchar_t)==2, "Windows UTF-16 required");
+#if defined(_M_IX86)
+static_assert(sizeof(void*)==4 && sizeof(ULONG_PTR)==4 && sizeof(LONG_PTR)==4,
+              "Windows x86 pointer ABI mismatch");
+static_assert(sizeof(CREDENTIALW)==52 && sizeof(WNDCLASSEXW)==48 && sizeof(MSG)==32,
+              "Windows x86 Win32 ABI mismatch");
+#else
+static_assert(sizeof(void*)==8 && sizeof(ULONG_PTR)==8 && sizeof(LONG_PTR)==8,
+              "Windows 64-bit pointer ABI mismatch");
+static_assert(sizeof(CREDENTIALW)==80 && sizeof(WNDCLASSEXW)==80 && sizeof(MSG)==48,
+              "Windows x64/ARM64 Win32 ABI mismatch");
+#endif
 
 API("user32",ATOM,RegisterClassExW,(const WNDCLASSEXW*));
 API("user32",HWND,CreateWindowExW,(DWORD,LPCWSTR,LPCWSTR,DWORD,int,int,int,int,HWND,HMENU,HINSTANCE,LPVOID));
@@ -132,7 +145,7 @@ constexpr int COLOR_WINDOW=5;
 constexpr int DEFAULT_GUI_FONT=17;
 
 // Additional UI, Credential Manager, DPI and GDI declarations (Win64 ABI).
-typedef unsigned long long DWORD_PTR;
+typedef ULONG_PTR DWORD_PTR;
 typedef DWORD COLORREF;
 typedef HANDLE HPEN;
 struct NMHDR { HWND hwndFrom; ULONG_PTR idFrom; UINT code; };
@@ -142,7 +155,13 @@ struct LVITEMW { UINT mask; int iItem; int iSubItem; UINT state; UINT stateMask;
 struct INITCOMMONCONTROLSEX { DWORD dwSize; DWORD dwICC; };
 struct PAINTSTRUCT { HANDLE hdc; BOOL fErase; RECT rcPaint; BOOL fRestore; BOOL fIncUpdate; BYTE rgbReserved[32]; };
 struct SIZE { LONG cx; LONG cy; };
-static_assert(sizeof(NMHDR)==24 && sizeof(LVITEMW)==88 && sizeof(LVCOLUMNW)==56,"Common control ABI mismatch");
+#if defined(_M_IX86)
+static_assert(sizeof(NMHDR)==12 && sizeof(LVITEMW)==60 && sizeof(LVCOLUMNW)==44,
+              "x86 common control ABI mismatch");
+#else
+static_assert(sizeof(NMHDR)==24 && sizeof(LVITEMW)==88 && sizeof(LVCOLUMNW)==56,
+              "x64/ARM64 common control ABI mismatch");
+#endif
 API("comctl32",BOOL,InitCommonControlsEx,(const INITCOMMONCONTROLSEX*));
 API("advapi32",BOOL,CredReadW,(LPCWSTR,DWORD,DWORD,CREDENTIALW**));
 API("user32",BOOL,SetProcessDpiAwarenessContext,(HANDLE));
@@ -192,7 +211,13 @@ constexpr UINT LVM_SETCOLUMNWIDTH=LVM_FIRST+30;
 // Native scaling, scrolling, modern owner-drawn buttons and window sizing.
 struct SCROLLINFO { UINT cbSize; UINT fMask; int nMin; int nMax; UINT nPage; int nPos; int nTrackPos; };
 struct DRAWITEMSTRUCT { UINT CtlType; UINT CtlID; UINT itemID; UINT itemAction; UINT itemState; HWND hwndItem; HANDLE hDC; RECT rcItem; ULONG_PTR itemData; };
-static_assert(sizeof(SCROLLINFO)==28 && sizeof(DRAWITEMSTRUCT)==64,"Window API ABI mismatch");
+#if defined(_M_IX86)
+static_assert(sizeof(SCROLLINFO)==28 && sizeof(DRAWITEMSTRUCT)==48,
+              "x86 window ABI mismatch");
+#else
+static_assert(sizeof(SCROLLINFO)==28 && sizeof(DRAWITEMSTRUCT)==64,
+              "x64/ARM64 window ABI mismatch");
+#endif
 API("user32",int,SetScrollInfo,(HWND,int,const SCROLLINFO*,BOOL));
 API("user32",BOOL,GetScrollInfo,(HWND,int,SCROLLINFO*));
 API("user32",BOOL,GetWindowRect,(HWND,RECT*));

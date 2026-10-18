@@ -1,11 +1,11 @@
-# RDP Credential Manager 4.0
+# RDP Credential Manager 4.1
 
-原生 Windows RDP 凭据管理器（Windows x64 / C++17 / Win32 API）。
+原生 Windows RDP 凭据管理器（Windows x86 / x64 / ARM64 / C++17 / Win32 API）。
 
 ## 使用与运行环境
 
 - 运行 `RDPCredManager.exe`。无需安装，不需要 Python、JavaScript、.NET 或第三方运行库。
-- 适用于 Windows 10（1703 及以上版本）及 Windows 11 x64，使用系统提供的 `mstsc.exe`、Windows Credential Manager 和 Windows 主题组件。
+- 适用于 Windows 10（1703 及以上版本）及 Windows 11；分别提供 x86、x64、ARM64 可执行文件，使用系统提供的 `mstsc.exe`、Windows Credential Manager 和 Windows 主题组件。
 - 程序以当前 Windows 用户身份运行，只管理当前用户的 `TERMSRV/` 凭据。无需管理员权限。
 - 新建凭据时仅自动填写当前 Windows 用户名。服务器、端口及密码字段默认留空。
 - 密码不写入配置文件、日志或源代码。用户输入的密码通过 `CredWriteW` 存入 Windows 凭据管理器；密码输入框内容在提交后清除。
@@ -57,7 +57,7 @@
 
 ## 构建
 
-从 Visual Studio 2022 x64 Native Tools Command Prompt 运行：
+在与目标架构对应的 Visual Studio 开发者命令提示符中运行（以下示例构建 x64）：
 
 ```bat
 build_windows.cmd
@@ -71,7 +71,7 @@ build_windows.cmd
 bash build_cross.sh
 ```
 
-该脚本通过项目包含的精简 Windows ABI 声明构建 Windows x64 可执行文件，最终程序使用 Windows 系统 DLL。
+该脚本通过项目包含的 Win32 ABI 声明分别构建 Windows x86、x64 和 ARM64 可执行文件，最终程序使用 Windows 系统 DLL。
 
 ## 测试
 
@@ -86,7 +86,7 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined tests/
 
 布局测试覆盖多种窗口宽高与 100%、125%、150%、200%、250%、300% DPI 换算，检查控件尺寸、面板范围和滚动位置。
 
-构建脚本还会编译并运行 `tests/manifest_verify.cpp`，检查最终 Windows EXE 的 PE x64 结构和 RT_MANIFEST 资源，核验 UAC 执行级别、Common Controls v6 和 Per-Monitor V2 属性。Visual Studio / CMake 工程可通过 CTest 运行相同检查。
+构建脚本还会编译并运行 `tests/manifest_verify.cpp`，检查对应架构的 PE32 或 PE32+ 结构和 RT_MANIFEST 资源，核验 UAC 执行级别、Common Controls v6 和 Per-Monitor V2 属性。Visual Studio / CMake 工程可通过 CTest 运行相同检查。
 
 交叉编译环境已检查编译结果和系统 DLL 导入。Windows GUI 实际操作、跨显示器移动及远程桌面连接仍需 Windows 实机测试。
 
@@ -106,8 +106,17 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined tests/
 
 ## GitHub Actions
 
-`.github/workflows/windows.yml` 在 Windows Server 2022 GitHub Hosted Runner 中使用 MSVC x64 编译，执行原生逻辑测试、HiDPI 布局测试、真实 Windows Credential Manager 临时凭据的读写枚举与删除测试、PE Manifest 检查，以及在 GUI 进程内部执行的凭据保存、端口编辑、列表选中状态和临时凭据清理测试。
+`.github/workflows/windows.yml` 使用 MSVC 构建 x86、x64 和 ARM64 程序，在 Windows Server 2022 和原生 Windows ARM64 Runner 中分别测试。测试包含核心逻辑、HiDPI 布局、Windows Credential Manager 临时凭据的读写和删除、PE Manifest，以及 GUI 中的保存、端口编辑和选中状态。
 
 主分支首次推送后，若不存在 `v4.0.0` Release，则由完成测试的工作流创建对应版本并上传 EXE、源代码压缩包和 SHA-256 文件。今后可推送 `v*` 版本标签触发新版本的测试与 Release 发布。
 
 GUI 集成测试通过 `RDPCredManager.exe --self-test` 在程序自身进程内运行，采用独立临时主机名，测试结束后删除测试凭据。远端 RDP 实际登录依然需要具备可访问远程主机的环境。
+
+## 多架构构建与发布
+
+- Windows x86（32 位）：在 Visual Studio amd64_x86 命令提示符中执行 `build_windows.cmd x86`。
+- Windows x64：在 Visual Studio x64 命令提示符中执行 `build_windows.cmd x64`。
+- Windows ARM64：在 Visual Studio amd64_arm64 命令提示符中执行 `build_windows.cmd arm64`。
+- LLVM 交叉编译使用 `bash build_cross.sh x86`、`x64` 或 `arm64`，构建后检查 EXE 的 PE 机器类型及内嵌 Manifest。
+- GitHub Actions 为每种架构单独编译；x86 与 x64 在 Windows Server 2022 上测试，ARM64 在原生 Windows ARM64 Runner 上测试。所有必要测试通过后，自动发布包含三个 EXE、源代码和 SHA-256 校验文件的 Release。
+- 发布文件：`RDPCredManager-Win32.exe`、`RDPCredManager-Win64.exe`、`RDPCredManager-ARM64.exe`。
