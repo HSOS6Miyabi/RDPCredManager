@@ -30,3 +30,5 @@ Windows Runner 执行 `tests/win_gui_test.cpp`，该测试启动 `RDPCredManager
 ## 收藏夹测试
 
 `tests/favorites_test.cpp` 验证同一主机不同凭据类型、重复收藏、会话名称和端口修改、取消收藏。Windows 图形界面集成测试在专用注册表子键中读写收藏项，验证跨进程存储所需的数据格式和删除凭据后收藏项保留的行为。
+
+- `tests/ui_geometry_test.cpp` 校验导航按钮宽度、输入框与星标按钮之间的空间，以及收藏详情区域在 96–288 DPI 下的尺寸。

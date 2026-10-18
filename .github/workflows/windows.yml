@@ -42,6 +42,8 @@ jobs:
           if errorlevel 1 exit /b 1
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\layout_test.exe tests\layout_test.cpp
           if errorlevel 1 exit /b 1
+          cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\ui_geometry_test.exe tests\ui_geometry_test.cpp
+          if errorlevel 1 exit /b 1
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\favorites_test.exe tests\favorites_test.cpp
           if errorlevel 1 exit /b 1
           cl /nologo /std:c++17 /W4 /EHsc /utf-8 /Fe:build\win_credential_test.exe tests\win_credential_test.cpp advapi32.lib
@@ -56,6 +58,8 @@ jobs:
           if errorlevel 1 exit /b 1
           build\layout_test.exe
           if errorlevel 1 exit /b 1
+          build\ui_geometry_test.exe
+          if errorlevel 1 exit /b 1
           build\favorites_test.exe
           if errorlevel 1 exit /b 1
           build\win_credential_test.exe
@@ -69,7 +73,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path staging | Out-Null
           Copy-Item RDPCredManager.exe "staging/${{ matrix.filename }}"
-          foreach ($file in @('manifest_verify.exe','core_test.exe','layout_test.exe','favorites_test.exe','win_credential_test.exe','win_gui_test.exe')) {
+          foreach ($file in @('manifest_verify.exe','core_test.exe','layout_test.exe','ui_geometry_test.exe','favorites_test.exe','win_credential_test.exe','win_gui_test.exe')) {
             Copy-Item "build/$file" "staging/$file"
           }
       - uses: actions/upload-artifact@v4
@@ -97,6 +101,7 @@ jobs:
             @('manifest_verify.exe','RDPCredManager-ARM64.exe','arm64'),
             @('core_test.exe'),
             @('layout_test.exe'),
+            @('ui_geometry_test.exe'),
             @('favorites_test.exe'),
             @('win_credential_test.exe')
           )
@@ -150,7 +155,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF#refs/tags/}"
           else
-            tag=v4.2.0
+            tag=v4.2.1
           fi
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists. No assets overwritten."
