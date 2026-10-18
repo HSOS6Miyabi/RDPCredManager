@@ -1,6 +1,6 @@
 # Windows 实机检查
 
-在 Windows 10/11 x64 系统中，检查以下操作：
+在 Windows x86、x64 或 ARM64 系统中，检查以下操作：
 
 1. 在 100%、125%、150% 和 200% 显示缩放下启动窗口，检查标题、输入框、按钮及列表是否完整呈现。
 2. 将窗口拖至使用不同缩放设置的显示器，确认字体大小、鼠标点击区域和滚动行为保持正确。
@@ -18,3 +18,10 @@
 ## GitHub Actions GUI 自动化集成测试
 
 Windows Runner 执行 `tests/win_gui_test.cpp`，该测试启动 `RDPCredManager.exe --self-test`，由 GUI 进程自身设置输入框并进行保存。测试会核对端口编辑、保存后的通用凭据选中状态、复制已有密码到新目标，以及两条临时凭据的清理。仅创建使用 `.invalid` 主机名的临时测试记录，不连接外部服务器。
+
+## 三架构 CI 验证
+
+- PE x86 机器类型 `0x014c`，使用 PE32；x64 为 `0x8664`，ARM64 为 `0xaa64`，均使用 PE32+。
+- 检查 UAC、Common Controls v6、Per-Monitor V2 的内嵌 Manifest。
+- x86/x64 在 Windows x64 Runner 原生执行（x86 通过 WOW64），ARM64 在 Windows ARM64 Runner 原生执行。
+- 每种架构运行凭据保存、读取、删除和 GUI 启动、端口编辑及列表选中测试；均使用临时凭据，不建立外部 RDP 连接。
