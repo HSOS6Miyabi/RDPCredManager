@@ -108,6 +108,8 @@ void Verify(const std::string& text) {
     Require(contains("Microsoft.Windows.Common-Controls") && contains("version=\"6.0.0.0\""),
             "Common Controls v6 dependency missing");
     Require(contains("PerMonitorV2"), "Per-monitor V2 DPI awareness missing");
+    Require(contains("8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a"),
+            "Windows 10/11 compatibility declaration missing");
     Require(contains("processorArchitecture=\"*\""), "Architecture-neutral manifest identity missing");
 }
 }

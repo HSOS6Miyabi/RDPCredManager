@@ -78,20 +78,61 @@ void ChangeTab(bool favorite);
 int S(int v) {return (v*dpi+48)/96;}
 void Wipe(wchar_t* data,unsigned size) {volatile wchar_t* p=data;while(size--) *p++=0;}
 void SetText(HWND h,const wchar_t* text) {if(h) SetWindowTextW(h,text);}
-void Notice(const wchar_t* text) {if(headlessSelfTest) return; MessageBoxW(frame,text,L"RDP 凭据管理器",MB_ICONINFORMATION|MB_OK);}
-void Alert(const wchar_t* text) {if(headlessSelfTest) return; MessageBoxW(frame,text,L"RDP 凭据管理器",MB_ICONWARNING|MB_OK);}
+enum class DialogIcon { Information, Warning, Error };
+int ShowTaskDialog(const wchar_t* heading,const wchar_t* message,DialogIcon icon,
+                   const wchar_t* accept=nullptr,const wchar_t* decline=nullptr,
+                   const wchar_t* details=nullptr,
+                   PFTASKDIALOGCALLBACK callback=nullptr,LONG_PTR callbackData=0) {
+    TASKDIALOG_BUTTON actions[]={{IDYES,accept},{IDNO,decline}};
+    const bool confirmation=accept && decline;
+    TASKDIALOGCONFIG dialog{};
+    dialog.cbSize=sizeof(dialog);
+    dialog.hwndParent=frame;
+    dialog.hInstance=application;
+    dialog.dwFlags=TDF_ALLOW_DIALOG_CANCELLATION|TDF_POSITION_RELATIVE_TO_WINDOW;
+    dialog.dwCommonButtons=confirmation?0:TDCBF_OK_BUTTON;
+    dialog.pszWindowTitle=L"RDP 凭据管理器";
+    dialog.pszMainIcon=(LPCWSTR)(LONG_PTR)(icon==DialogIcon::Error?-2:
+                                         icon==DialogIcon::Warning?-1:-3);
+    dialog.pszMainInstruction=heading;
+    dialog.pszContent=message;
+    dialog.cButtons=confirmation?2:0;
+    dialog.pButtons=confirmation?actions:nullptr;
+    dialog.nDefaultButton=confirmation?IDNO:IDOK;
+    dialog.pszExpandedInformation=details;
+    if(details) {
+        dialog.pszExpandedControlText=L"隐藏技术细节";
+        dialog.pszCollapsedControlText=L"显示技术细节";
+    }
+    dialog.pfCallback=callback;
+    dialog.lpCallbackData=callbackData;
+    int selectedButton=IDCANCEL;
+    if(TaskDialogIndirect(&dialog,&selectedButton,nullptr,nullptr)<0) return IDCANCEL;
+    return selectedButton;
+}
+bool Confirm(const wchar_t* heading,const wchar_t* message,
+             const wchar_t* accept,const wchar_t* decline,
+             DialogIcon icon=DialogIcon::Warning) {
+    if(headlessSelfTest) return false;
+    return ShowTaskDialog(heading,message,icon,accept,decline)==IDYES;
+}
+void Notice(const wchar_t* text) {
+    if(!headlessSelfTest) ShowTaskDialog(L"操作提示",text,DialogIcon::Information);
+}
+void Alert(const wchar_t* text) {
+    if(!headlessSelfTest) ShowTaskDialog(L"请注意",text,DialogIcon::Warning);
+}
 void Status(const wchar_t* text) {SetText(status,text);}
 void Failure(const wchar_t* titleText,DWORD code) {
     if(headlessSelfTest) return;
-    wchar_t buffer[880]={},num[20]={},details[440]={};
-    core::Copy(buffer,880,titleText);
-    core::Append(buffer,880,L"\r\n\r\nWindows 错误代码：");
+    wchar_t buffer[880]=L"Windows 错误代码：",num[20]={},details[440]={};
     core::FormatUnsigned(code,num,20);core::Append(buffer,880,num);
     if(FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM|FORMAT_MESSAGE_IGNORE_INSERTS,
                       nullptr,code,0,details,440,nullptr)) {
         core::Append(buffer,880,L"\r\n");core::Append(buffer,880,details);
     }
-    MessageBoxW(frame,buffer,L"操作失败",MB_ICONERROR|MB_OK);
+    ShowTaskDialog(titleText,L"Windows 返回了错误信息。可展开技术细节查看错误代码和原因。",
+                   DialogIcon::Error,nullptr,nullptr,buffer);
 }
 HWND Control(const wchar_t* classname,const wchar_t* label,DWORD flags,DWORD ex,int id,HFONT face) {
     HWND h=CreateWindowExW(ex,classname,label,WS_CHILD|WS_VISIBLE|flags,
@@ -497,9 +538,9 @@ void Save(bool converting) {
         Wipe(password,1025);Alert(L"请输入密码，才能创建新凭据。 ");return;
     }
     if(converting) {
-        if(MessageBoxW(frame,
-            L"将使用重新输入的密码创建通用凭据。\r\n\r\n通用凭据可由同一 Windows 用户身份下的应用读取，安全保护级别与域密码凭据不同。\r\n\r\n原域密码凭据会暂时保留，待您确认连接成功后再删除。\r\n\r\n是否继续？",
-            L"确认转换凭据",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) {
+        if(!Confirm(L"确认转换凭据",
+            L"将使用重新输入的密码创建通用凭据。\r\n\r\n通用凭据可由同一 Windows 用户身份下的应用读取，安全保护级别与域密码凭据不同。\r\n\r\n原域密码凭据会暂时保留，待您确认连接成功后再删除。",
+            L"继续转换",L"保留旧凭据")) {
             if(source) CredFree(source);Wipe(password,1025);return;
         }
     }
@@ -512,9 +553,9 @@ void Save(bool converting) {
         return;
     }
     if(targetPresence==1 && !same) {
-        if(MessageBoxW(frame,
-            L"目标名称下已有通用凭据。继续将覆盖其用户名与密码。\r\n\r\n是否覆盖此凭据？",
-            L"确认覆盖现有通用凭据",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) {
+        if(!Confirm(L"确认覆盖现有通用凭据",
+            L"目标名称下已有通用凭据。继续将覆盖其用户名与密码。",
+            L"覆盖凭据",L"取消")) {
             if(source) CredFree(source);Wipe(password,1025);return;
         }
     }
@@ -542,9 +583,9 @@ void Save(bool converting) {
 }
 void CancelConversion() {
     if(!conversionPending) return;
-    if(MessageBoxW(frame,
-        L"取消转换确认流程？\r\n\r\n新创建的通用凭据和原域密码凭据都会保留在 Windows 凭据管理器中，稍后可以分别管理。",
-        L"保留当前凭据",MB_YESNO|MB_ICONINFORMATION|MB_DEFBUTTON2)!=IDYES) return;
+    if(!Confirm(L"保留当前凭据",
+        L"结束转换确认流程后，新创建的通用凭据和原域密码凭据都会保留在 Windows 凭据管理器中，稍后可以分别管理。",
+        L"结束确认",L"返回",DialogIcon::Information)) return;
     wchar_t newTarget[520]={};core::Copy(newTarget,520,pendingNew);
     conversionPending=false;pendingOld[0]=0;pendingNew[0]=0;pendingUser[0]=0;
     Refresh(false);
@@ -580,7 +621,7 @@ void Cleanup() {
     core::Append(msg,1250,pendingOld);
     core::Append(msg,1250,L"\r\n新凭据：");core::Append(msg,1250,pendingNew);
     core::Append(msg,1250,L"\r\n\r\n选择“是”将永久删除旧域密码凭据。是否已成功登录并确认删除？");
-    if(MessageBoxW(frame,msg,L"确认登录成功并删除旧凭据",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) return;
+    if(!Confirm(L"确认登录成功并删除旧凭据",msg,L"删除旧凭据",L"保留旧凭据")) return;
     if(!MigrateConvertedFavorite(pendingOld,pendingNew)) {
         Alert(L"保存转换后的收藏夹关联信息失败。旧凭据暂时保留。 ");return;
     }
@@ -601,7 +642,7 @@ void DeleteSelected() {
     core::Append(msg,760,e.target);
     core::Append(msg,760,e.type==CRED_TYPE_GENERIC?L"\r\n类型：通用凭据":L"\r\n类型：域密码凭据");
     core::Append(msg,760,L"\r\n\r\n此操作无法撤销。确定删除吗？");
-    if(MessageBoxW(frame,msg,L"删除凭据",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) return;
+    if(!Confirm(L"删除凭据",msg,L"删除凭据",L"保留凭据")) return;
     if(!CredDeleteW(e.target,e.type,0)) {Failure(L"删除凭据失败。",GetLastError());return;}
     if(conversionPending && ((e.type==CRED_TYPE_DOMAIN_PASSWORD &&
         core::SameTarget(pendingOld,e.target)) || (e.type==CRED_TYPE_GENERIC &&
@@ -898,8 +939,8 @@ void SaveFavoriteDetails() {
 }
 void RemoveFavorite() {
     if(!favoriteStoreWritable || selectedFavorite<0 || (unsigned)selectedFavorite>=favoriteCount) return;
-    if(MessageBoxW(frame,L"确定取消收藏此会话吗？\r\n\r\nWindows 凭据仍会保留。",
-                   L"取消收藏",MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2)!=IDYES) return;
+    if(!Confirm(L"取消收藏",L"取消收藏此会话后，Windows 凭据仍会保留。",
+                   L"取消收藏",L"保留收藏",DialogIcon::Information)) return;
     undoBookmarks=bookmarks;unsigned before=favoriteCount;
     favorites::Remove(bookmarks.entries,&favoriteCount,(unsigned)selectedFavorite);
     if(!PersistFavorites()) {bookmarks=undoBookmarks;favoriteCount=before;return;}
@@ -1102,9 +1143,9 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wParam,LPARAM lParam
         case WM_CREATE: frame=window;dpi=(int)GetDpiForWindow(window);if(!dpi) dpi=96;Init();return 0;
         case WM_SIZE: Layout();return 0;
         case WM_CLOSE:
-            if(conversionPending && MessageBoxW(window,
-               L"有一条凭据转换正在等待连接确认。关闭程序后，两条凭据都会保留。\r\n\r\n确定关闭吗？",
-               L"确认退出",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES) return 0;
+            if(conversionPending && !Confirm(L"确认退出",
+               L"有一条凭据转换正在等待连接确认。关闭程序后，两条凭据都会保留。",
+               L"退出程序",L"继续使用")) return 0;
             return DefWindowProcW(window,message,wParam,lParam);
         case WM_VSCROLL: {
             SCROLLINFO si{sizeof(si),SIF_ALL,0,0,0,0,0};
@@ -1224,11 +1265,29 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wParam,LPARAM lParam
     }
     return DefWindowProcW(window,message,wParam,lParam);
 }
+LONG CALLBACK AutoSelectTaskDialogButton(HWND dialog,UINT notification,
+                                         WPARAM,LPARAM,LONG_PTR button) {
+    if(notification==TDN_CREATED)
+        PostMessageW(dialog,TDM_CLICK_BUTTON,(WPARAM)button,0);
+    return 0;
+}
+bool TaskDialogSelfTest() {
+    if(ShowTaskDialog(L"信息提示",L"测试信息对话框。",DialogIcon::Information,
+                      nullptr,nullptr,nullptr,AutoSelectTaskDialogButton,IDOK)!=IDOK) return false;
+    if(ShowTaskDialog(L"确认操作",L"测试默认保留数据的确认对话框。",DialogIcon::Warning,
+                      L"继续",L"保留",nullptr,AutoSelectTaskDialogButton,IDNO)!=IDNO) return false;
+    if(ShowTaskDialog(L"确认操作",L"测试执行操作的确认对话框。",DialogIcon::Warning,
+                      L"继续",L"保留",nullptr,AutoSelectTaskDialogButton,IDYES)!=IDYES) return false;
+    return ShowTaskDialog(L"错误提示",L"测试包含技术细节的对话框。",DialogIcon::Error,
+                          nullptr,nullptr,L"Windows 错误代码：5",
+                          AutoSelectTaskDialogButton,IDOK)==IDOK;
+}
 // This isolated Windows CI integration mode runs inside the GUI process, so
 // it can exercise native input controls without remote-process UI privileges.
 // It uses uniquely named disposable credentials and never starts an RDP session.
 int NativeGuiSelfTest() {
     headlessSelfTest=true;
+    if(!TaskDialogSelfTest()) return 50;
     if(!IsWindowEnabled(saveBtn) || !IsWindowEnabled(portBox)) return 30;
     const auto tabRect=ui_geometry::Tabs(geometry);
     const auto editorRect=ui_geometry::Editor(geometry);
@@ -1359,11 +1418,13 @@ int Run() {
     int winW=(int)(1160*screenDpi/96),winH=(int)(920*screenDpi/96);
     if(winW>workW-24) winW=workW-24;
     if(winH>workH-24) winH=workH-24;
-    HWND window=CreateWindowExW(0,wc.lpszClassName,L"RDP Credential Manager 4.2.1",
+    HWND window=CreateWindowExW(0,wc.lpszClassName,L"RDP Credential Manager 4.2.2",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN|WS_VSCROLL,
         work.left+(workW-winW)/2,work.top+(workH-winH)/2,winW,winH,
         nullptr,nullptr,application,nullptr);
     if(!window) return 3;
+    const DWORD roundCorners=DWMWCP_ROUND;
+    DwmSetWindowAttribute(window,DWMWA_WINDOW_CORNER_PREFERENCE,&roundCorners,sizeof(roundCorners));
     if(RequestedInitTest()) return 0;
     if(RequestedSelfTest()) return NativeGuiSelfTest();
     ShowWindow(window,SW_SHOW);UpdateWindow(window);

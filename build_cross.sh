@@ -33,13 +33,14 @@ make_import() {
   "$LD" /nologo /machine:"$MACHINE" /dll /noentry "/def:build/$ARCH/${library}.def" "/implib:build/$ARCH/${library}.lib" "/out:build/$ARCH/${library}.dll"
 }
 make_import kernel32 ExitProcess GetLastError GetModuleHandleW GetSystemDirectoryW GetCommandLineW GetCurrentProcessId FormatMessageW
-make_import user32 RegisterClassExW CreateWindowExW DefWindowProcW ShowWindow UpdateWindow GetMessageW TranslateMessage IsDialogMessageW DispatchMessageW PostQuitMessage SendMessageW MoveWindow GetClientRect SetWindowTextW GetWindowTextW GetWindowTextLengthW MessageBoxW LoadCursorW SetFocus EnableWindow IsWindowEnabled SetProcessDpiAwarenessContext GetDpiForWindow SetWindowPos GetDlgCtrlID InvalidateRect BeginPaint EndPaint FillRect SetScrollInfo GetScrollInfo GetWindowRect GetSystemMetrics SystemParametersInfoW GetDpiForSystem DrawTextW DrawFocusRect DestroyIcon
+make_import user32 RegisterClassExW CreateWindowExW DefWindowProcW ShowWindow UpdateWindow GetMessageW TranslateMessage IsDialogMessageW DispatchMessageW PostQuitMessage SendMessageW MoveWindow GetClientRect SetWindowTextW GetWindowTextW GetWindowTextLengthW PostMessageW LoadCursorW SetFocus EnableWindow IsWindowEnabled SetProcessDpiAwarenessContext GetDpiForWindow SetWindowPos GetDlgCtrlID InvalidateRect BeginPaint EndPaint FillRect SetScrollInfo GetScrollInfo GetWindowRect GetSystemMetrics SystemParametersInfoW GetDpiForSystem DrawTextW DrawFocusRect DestroyIcon
 make_import gdi32 GetStockObject CreateFontW CreateSolidBrush DeleteObject SetTextColor SetBkMode CreatePen SelectObject RoundRect
 make_import advapi32 GetUserNameW CredEnumerateW CredWriteW CredDeleteW CredReadW CredFree RegOpenKeyExW RegCreateKeyExW RegQueryValueExW RegSetValueExW RegCloseKey RegDeleteKeyW
 make_import shell32 ShellExecuteW ExtractIconExW
-make_import comctl32 InitCommonControlsEx
+make_import comctl32 InitCommonControlsEx TaskDialogIndirect
 make_import uxtheme SetWindowTheme
-"$LD" /nologo /machine:"$MACHINE" /subsystem:windows "/entry:$ENTRY" /nodefaultlib /opt:ref /opt:icf /manifest:embed /manifestuac:no /manifestinput:app.manifest "/out:build/$ARCH/RDPCredManager.exe" "build/$ARCH/main.obj" "build/$ARCH/kernel32.lib" "build/$ARCH/user32.lib" "build/$ARCH/gdi32.lib" "build/$ARCH/advapi32.lib" "build/$ARCH/shell32.lib" "build/$ARCH/comctl32.lib" "build/$ARCH/uxtheme.lib"
+make_import dwmapi DwmSetWindowAttribute
+"$LD" /nologo /machine:"$MACHINE" /subsystem:windows "/entry:$ENTRY" /nodefaultlib /opt:ref /opt:icf /manifest:embed /manifestuac:no /manifestinput:app.manifest "/out:build/$ARCH/RDPCredManager.exe" "build/$ARCH/main.obj" "build/$ARCH/kernel32.lib" "build/$ARCH/user32.lib" "build/$ARCH/gdi32.lib" "build/$ARCH/advapi32.lib" "build/$ARCH/shell32.lib" "build/$ARCH/comctl32.lib" "build/$ARCH/uxtheme.lib" "build/$ARCH/dwmapi.lib"
 
 # Validate the manifest embedded in the actual output file.
 HOST_CXX=${HOST_CXX:-clang++}

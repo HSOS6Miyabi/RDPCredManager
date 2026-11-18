@@ -1,4 +1,4 @@
-# RDP Credential Manager 4.2.1
+# RDP Credential Manager 4.2.2
 
 原生 Windows RDP 凭据管理器及收藏会话启动器（Windows x86 / x64 / ARM64 / C++17 / Win32 API）。
 
@@ -112,7 +112,7 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined tests/
 - `tests/favorites_test.cpp`：收藏夹增删、别名、端口和凭据类型识别测试。
 - `tests/layout_test.cpp`：布局与 DPI 换算测试。
 - `tests/manifest_verify.cpp`：对生成的 Windows EXE 进行嵌入式清单验证。
-- `app.manifest`：Common Controls 6、Per-Monitor V2 DPI 及普通用户权限设置。
+- `app.manifest`：Common Controls v6、Windows 10/11 兼容性声明、Per-Monitor V2 DPI 及普通用户权限设置。
 - `build_windows.cmd`：Windows Visual C++ 编译脚本。
 - `build_cross.sh`：Clang/LLD 交叉编译脚本。
 - `CMakeLists.txt`：Visual Studio/CMake 工程定义。
@@ -121,7 +121,7 @@ clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined tests/
 
 `.github/workflows/windows.yml` 在 Windows Server 2022 GitHub Hosted Runner 中使用 MSVC x64 编译，执行原生逻辑测试、HiDPI 布局测试、真实 Windows Credential Manager 临时凭据的读写枚举与删除测试、PE Manifest 检查，以及在 GUI 进程内部执行的凭据保存、端口编辑、列表选中状态和临时凭据清理测试。
 
-主分支首次推送后，若不存在 `v4.0.0` Release，则由完成测试的工作流创建对应版本并上传 EXE、源代码压缩包和 SHA-256 文件。今后可推送 `v*` 版本标签触发新版本的测试与 Release 发布。
+主分支更新后，工作流会在三个架构的测试全部通过且当前版本尚未发布时，创建对应版本的 Release，并上传 EXE、源代码压缩包和 SHA-256 校验文件。推送 `v*` 版本标签也会触发对应版本的测试与发布。
 
 GUI 集成测试通过 `RDPCredManager.exe --self-test` 在程序自身进程内运行，采用独立临时主机名，测试结束后删除测试凭据。远端 RDP 实际登录依然需要具备可访问远程主机的环境。
 

@@ -155,12 +155,12 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF#refs/tags/}"
           else
-            tag=v4.2.1
+            tag=v4.2.2
           fi
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists. No assets overwritten."
           else
             gh release create "$tag" dist/* --target "$GITHUB_SHA" \
               --title "RDP Credential Manager $tag" \
-              --notes "Native Windows x86 (32-bit), x64 and ARM64 builds. Windows Credential Manager API tests, GUI integration tests, favorites registry persistence and embedded manifest verification run on native-capable Windows runners before release."
+              --notes "Native Windows x86 (32-bit), x64 and ARM64 builds with modern Windows task dialogs and Windows 11 rounded corners. Windows Credential Manager API tests, native task dialog tests, GUI integration tests, favorites registry persistence and embedded manifest verification pass before release."
           fi

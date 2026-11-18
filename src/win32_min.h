@@ -78,7 +78,6 @@ API("user32",BOOL,GetClientRect,(HWND,RECT*));
 API("user32",BOOL,SetWindowTextW,(HWND,LPCWSTR));
 API("user32",int,GetWindowTextW,(HWND,LPWSTR,int));
 API("user32",int,GetWindowTextLengthW,(HWND));
-API("user32",int,MessageBoxW,(HWND,LPCWSTR,LPCWSTR,UINT));
 API("user32",HCURSOR,LoadCursorW,(HINSTANCE,LPCWSTR));
 API("user32",HWND,SetFocus,(HWND));
 API("user32",BOOL,EnableWindow,(HWND,BOOL));
@@ -134,12 +133,6 @@ constexpr DWORD CRED_PRESERVE_CREDENTIAL_BLOB=1;
 constexpr DWORD ERROR_NOT_FOUND=1168;
 constexpr DWORD FORMAT_MESSAGE_FROM_SYSTEM=0x00001000;
 constexpr DWORD FORMAT_MESSAGE_IGNORE_INSERTS=0x00000200;
-constexpr UINT MB_OK=0x0000;
-constexpr UINT MB_YESNO=0x0004;
-constexpr UINT MB_ICONERROR=0x0010;
-constexpr UINT MB_ICONWARNING=0x0030;
-constexpr UINT MB_ICONINFORMATION=0x0040;
-constexpr UINT MB_DEFBUTTON2=0x0100;
 constexpr int IDYES=6;
 constexpr int SW_HIDE=0;
 constexpr int SW_SHOWNORMAL=1;
@@ -217,7 +210,6 @@ constexpr UINT LVN_FIRST=(UINT)-100,LVN_ITEMCHANGED=(UINT)-101,NM_DBLCLK=(UINT)-
 constexpr DWORD ICC_LISTVIEW_CLASSES=0x00000001;
 constexpr UINT SWP_NOZORDER=0x0004, SWP_NOACTIVATE=0x0010;
 constexpr DWORD FW_NORMAL=400,FW_SEMIBOLD=600,FW_BOLD=700;
-constexpr UINT MB_ICONQUESTION=0x0020, MB_YESNOCANCEL=0x0003;
 constexpr int IDNO=7,IDCANCEL=2;
 constexpr UINT TRANSPARENT=1;
 constexpr UINT LVM_SETCOLUMNWIDTH=LVM_FIRST+30;
@@ -259,3 +251,54 @@ constexpr UINT LVM_ENSUREVISIBLE=LVM_FIRST+19;
 
 API("shell32",UINT,ExtractIconExW,(LPCWSTR,int,HICON*,HICON*,UINT));
 API("user32",BOOL,DestroyIcon,(HICON));
+
+// Windows task dialogs use Common Controls v6 from the application manifest.
+// TASKDIALOGCONFIG and TASKDIALOG_BUTTON are byte-packed in the Windows SDK.
+#pragma pack(push,1)
+struct TASKDIALOG_BUTTON { int nButtonID; LPCWSTR pszButtonText; };
+typedef LONG (CALLBACK *PFTASKDIALOGCALLBACK)(HWND,UINT,WPARAM,LPARAM,LONG_PTR);
+struct TASKDIALOGCONFIG {
+    UINT cbSize;
+    HWND hwndParent;
+    HINSTANCE hInstance;
+    UINT dwFlags;
+    UINT dwCommonButtons;
+    LPCWSTR pszWindowTitle;
+    LPCWSTR pszMainIcon;
+    LPCWSTR pszMainInstruction;
+    LPCWSTR pszContent;
+    UINT cButtons;
+    const TASKDIALOG_BUTTON* pButtons;
+    int nDefaultButton;
+    UINT cRadioButtons;
+    const TASKDIALOG_BUTTON* pRadioButtons;
+    int nDefaultRadioButton;
+    LPCWSTR pszVerificationText;
+    LPCWSTR pszExpandedInformation;
+    LPCWSTR pszExpandedControlText;
+    LPCWSTR pszCollapsedControlText;
+    LPCWSTR pszFooterIcon;
+    LPCWSTR pszFooter;
+    PFTASKDIALOGCALLBACK pfCallback;
+    LONG_PTR lpCallbackData;
+    UINT cxWidth;
+};
+#pragma pack(pop)
+#if defined(_M_IX86)
+static_assert(sizeof(TASKDIALOG_BUTTON)==8 && sizeof(TASKDIALOGCONFIG)==96,
+              "x86 task dialog ABI mismatch");
+#else
+static_assert(sizeof(TASKDIALOG_BUTTON)==12 && sizeof(TASKDIALOGCONFIG)==160,
+              "x64/ARM64 task dialog ABI mismatch");
+#endif
+API("comctl32",LONG,TaskDialogIndirect,(const TASKDIALOGCONFIG*,int*,int*,BOOL*));
+API("user32",BOOL,PostMessageW,(HWND,UINT,WPARAM,LPARAM));
+API("dwmapi",LONG,DwmSetWindowAttribute,(HWND,DWORD,LPCVOID,DWORD));
+constexpr UINT TDF_ALLOW_DIALOG_CANCELLATION=0x0008;
+constexpr UINT TDF_POSITION_RELATIVE_TO_WINDOW=0x1000;
+constexpr UINT TDCBF_OK_BUTTON=0x0001;
+constexpr UINT TDN_CREATED=0;
+constexpr UINT TDM_CLICK_BUTTON=0x0400+102;
+constexpr DWORD DWMWA_WINDOW_CORNER_PREFERENCE=33;
+constexpr DWORD DWMWCP_ROUND=2;
+constexpr int IDOK=1;

@@ -25,7 +25,7 @@ if(MSVC)
         /MANIFEST:EMBED /MANIFESTUAC:NO
         /MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/app.manifest)
 endif()
-target_link_libraries(RDPCredManager PRIVATE user32 gdi32 advapi32 shell32 kernel32 comctl32 uxtheme)
+target_link_libraries(RDPCredManager PRIVATE user32 gdi32 advapi32 shell32 kernel32 comctl32 uxtheme dwmapi)
 add_executable(manifest_verify tests/manifest_verify.cpp)
 add_executable(core_test tests/core_test.cpp)
 add_executable(layout_test tests/layout_test.cpp)
