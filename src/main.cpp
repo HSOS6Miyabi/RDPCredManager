@@ -92,8 +92,9 @@ int ShowTaskDialog(const wchar_t* heading,const wchar_t* message,DialogIcon icon
     dialog.dwFlags=TDF_ALLOW_DIALOG_CANCELLATION|TDF_POSITION_RELATIVE_TO_WINDOW;
     dialog.dwCommonButtons=confirmation?0:TDCBF_OK_BUTTON;
     dialog.pszWindowTitle=L"RDP 凭据管理器";
-    dialog.pszMainIcon=(LPCWSTR)(LONG_PTR)(icon==DialogIcon::Error?-2:
-                                         icon==DialogIcon::Warning?-1:-3);
+    const WORD standardIcon=(WORD)(icon==DialogIcon::Error?-2:
+                                    icon==DialogIcon::Warning?-1:-3);
+    dialog.pszMainIcon=(LPCWSTR)(ULONG_PTR)standardIcon;
     dialog.pszMainInstruction=heading;
     dialog.pszContent=message;
     dialog.cButtons=confirmation?2:0;
